@@ -10,9 +10,9 @@ backend, plain JavaScript frontend, plus a separate UI for old browsers
 #### [InDev state]
 
 ----
-#### ATTENTION! For now, this repository contains pre-added, semi-private repository with metadata for several Apple Arcade games (private version catalog testing).
-#### Keeping the "token" and "repo" fields filled is allowed for personal use only. Sharing or hosting is strictly prohibited.
-#### If this tool is used for sharing or hosting, you must clear the repo and token values in the BUILTIN_CATALOG constant located in the /ipatool_api/services/appstore.py file.
+#### ATTENTION! For now, this repository contains pre-added repository with metadata for several Apple Arcade games (private version catalog testing).
+#### Keeping the "repo" field filled is allowed for personal use only. Sharing or hosting is strictly prohibited.
+#### If this tool is used for sharing or hosting, you must clear the "repo" value in the BUILTIN_CATALOG constant located in the /ipatool_api/services/appstore.py file.
 ----
 ##### NOTE: The modified Unicorn emulator in the /vendor/ folder is currently not working. Development is still in progress to bring Android and iOS support to this tool.
 ##### Please do not use the tool on these platforms for now, and do not attempt to install "requirements-ios.txt" or "requirements-android.txt".

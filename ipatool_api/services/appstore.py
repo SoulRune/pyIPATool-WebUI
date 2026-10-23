@@ -1514,7 +1514,7 @@ class AppStoreService:
         "repo": "SoulRune/pyIPATool-VerRepo",       # "owner/name"
         "branch": "main",
         "prefix": "apps",
-        "token": "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",      # read-only fine-grained token (private repository)
+        "token": "",      # read-only fine-grained token (private repository)
     }
 
     def _community_source(self, name: str, url: str, param: Optional[str], app: App) -> List[CommunityVersionEntry]:
