@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Unique reverse-DNS style identifier. Must match the filename
+         (com.ipatool.webui.plist) for launchd to treat it consistently. -->
+    <key>Label</key>
+    <string>com.ipatool.webui</string>
+
+    <!-- ===== FILL THESE IN FOR YOUR SETUP ===== -->
+
+    <!-- Full path to the python3 binary INSIDE your venv. Activate the venv
+         and run `which python3` to get this - launchd does not source shell
+         profiles or activate venvs on its own, so this must be the exact
+         interpreter path, not just "python3" or "python app.py". -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/PATH/TO/YOUR/venv/bin/python3</string>
+        <string>app.py</string>
+        <string>--legacy</string>
+        <!-- Add or remove flags here exactly as you would pass them on the
+             command line (port, host, debug, etc) - one array entry per
+             argument, not one string with spaces. -->
+    </array>
+
+    <!-- The repo's root directory (where app.py lives). -->
+    <key>WorkingDirectory</key>
+    <string>/PATH/TO/pyIPATool-WebUI</string>
+
+    <!-- ===== USUALLY FINE AS-IS ===== -->
+
+    <!-- Start automatically when this plist is loaded, and again on every
+         boot once it's placed in /Library/LaunchDaemons. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart automatically if the process exits/crashes for any reason. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- stdout/stderr, since there's no terminal attached. -->
+    <key>StandardOutPath</key>
+    <string>/tmp/ipatool-webui.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ipatool-webui.log</string>
+</dict>
+</plist>

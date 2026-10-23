@@ -1,5 +1,11 @@
-Flask==3.0.3
-requests==2.32.3
-itsdangerous==2.2.0
-Werkzeug==3.0.2
-Jinja2==3.1.4
+# Python 3.9+
+-r requirements-core.txt
+
+# CPU emulator for Apple's sign-in signing code. Prebuilt for Windows, macOS
+# and Linux x86_64/aarch64/i686; elsewhere pip compiles it (cmake and a C
+# compiler). Without it the server runs, only sign-in is unavailable.
+unicorn>=2.1.4,<2.2
+
+# Faster one-time unpacking of Apple's files (only where wheels exist).
+lzfse>=0.4.2; python_version < "3.13" and platform_python_implementation == "CPython"
+pyliblzfse>=0.4.1; python_version == "3.13" and (sys_platform == "win32" or sys_platform == "darwin")

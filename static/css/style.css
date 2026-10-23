@@ -56,15 +56,32 @@ label {
 input[type="text"],
 input[type="email"],
 input[type="password"],
-input[type="number"] {
+input[type="number"],
+select {
   padding: 0.6rem 0.75rem;
   border-radius: 10px;
   border: 1px solid rgba(148, 163, 184, 0.6);
-  background: rgba(15, 23, 42, 0.8);
+  background-color: rgba(15, 23, 42, 0.8);
   color: #f8fafc;
+  font: inherit;
+  font-size: 0.9rem;
 }
 
-input:focus {
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 2rem;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2394a3b8' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+}
+
+a {
+  color: #60a5fa;
+}
+
+input:focus,
+select:focus {
   outline: 2px solid var(--accent);
   border-color: transparent;
 }
@@ -237,7 +254,8 @@ th, td {
 
 .app-card-meta {
   display: flex;
-  gap: 1.5rem;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
   margin-top: 0.5rem;
   font-size: 0.9rem;
   color: rgba(226, 232, 240, 0.7);
@@ -305,15 +323,19 @@ th, td {
 .version-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 0.75rem;
   cursor: pointer;
   user-select: none;
 }
 
 .version-basic {
-  display: flex;
-  gap: 2rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.5rem 1.5rem;
   font-size: 0.95rem;
+  flex: 1;
+  min-width: 0;
 }
 
 .version-basic strong {
@@ -324,6 +346,8 @@ th, td {
 .expand-icon {
   transition: transform 0.2s ease;
   color: rgba(148, 163, 184, 0.6);
+  flex-shrink: 0;
+  margin-top: 0.15rem;
 }
 
 .version-card.expanded .expand-icon {
@@ -361,7 +385,24 @@ th, td {
 
 .version-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+#search-results {
+  margin-top: 1rem;
+}
+
+.section-header {
+  margin-bottom: 1rem;
+}
+
+.section-header h2 {
+  margin-bottom: 0;
+}
+
+.account-extra {
   margin-top: 1rem;
 }
 
@@ -425,6 +466,7 @@ button.downloading::after {
   gap: 1rem;
   z-index: 9998;
   min-width: 250px;
+  max-width: calc(100vw - 2.5rem);
   backdrop-filter: blur(8px);
 }
 
@@ -470,6 +512,7 @@ button.downloading::after {
   backdrop-filter: blur(8px);
   animation: slideDown 0.3s ease-out;
   min-width: 200px;
+  max-width: calc(100vw - 2.5rem);
   text-align: center;
 }
 
@@ -511,4 +554,253 @@ button.downloading::after {
   table {
     font-size: 0.9rem;
   }
+
+  .version-basic {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem 1rem;
+  }
+
+  .app-card-meta {
+    gap: 0.4rem 1rem;
+  }
+
+  /* action buttons don't fit side by side on a phone: stack them */
+  .version-actions button {
+    flex: 1 1 100%;
+  }
 }
+
+/* "Save on server" is hidden when the server doesn't allow it
+   (browser-session mode without --allow-server-save). */
+.no-server-save .save-server-btn {
+  display: none !important;
+}
+
+/* Certificate hint for signed-in users; the sign-in form has its own copy. */
+.account-extra[hidden] {
+  display: none;
+}
+
+/* Round close button of the floating banners (install / manual download).
+   padding:0 matters: the generic button rule's padding turned it into an
+   oval and pushed the cross off-centre. */
+button.banner-close {
+  display: block;
+  width: 28px;
+  height: 28px;
+  min-width: 0;
+  -webkit-flex-shrink: 0;
+  flex-shrink: 0;
+  padding: 0;
+  margin: 0 0 0 0.5rem;
+  border: none;
+  border-radius: 50%;
+  -webkit-border-radius: 50%;
+  background: rgba(148, 163, 184, 0.15);
+  color: rgba(226, 232, 240, 0.8);
+  font-size: 13px;
+  font-weight: normal;
+  line-height: 28px;
+  text-align: center;
+  cursor: pointer;
+  -webkit-box-sizing: border-box;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+}
+button.banner-close.float-right {
+  float: right;
+}
+
+.error-text {
+  color: #f87171;
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* "App Store" chip next to the App ID on search results. The
+   itunes.apple.com/app/id<N> form is handed to the App Store app by Safari
+   on every iOS version (iOS 6 included) and redirects to apps.apple.com in
+   desktop browsers. */
+a.appstore-chip {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 6px;
+  -webkit-border-radius: 6px;
+  background: rgba(15, 23, 42, 0.6);
+  color: #f8fafc;
+  font-size: 0.85rem;
+  text-decoration: none;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* Apple Arcade notice above the read-only community list. */
+.notice-warning {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  border-radius: 10px;
+  -webkit-border-radius: 10px;
+  background: rgba(251, 191, 36, 0.12);
+  color: #fde68a;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+/* Apple Arcade: the current version (downloadable) in the community list. */
+.badge-current {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  -webkit-border-radius: 999px;
+  background: rgba(52, 199, 89, 0.18);
+  border: 1px solid rgba(52, 199, 89, 0.5);
+  color: #86efac;
+  font-size: 0.75rem;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* Private catalog: versions Apple refuses (lost) or not checked yet (unknown). */
+.badge-lost, .badge-unknown {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  -webkit-border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.badge-lost {
+  background: rgba(239, 68, 68, 0.16);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+}
+.badge-unknown {
+  background: rgba(148, 163, 184, 0.16);
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  color: #cbd5e1;
+}
+
+/* "Merge version catalogs": versions Apple didn't describe */
+.catalog-extra {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed rgba(128, 128, 128, 0.45);
+}
+.catalog-extra-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  opacity: 0.8;
+}
+
+/* Account switcher */
+/* Account switcher: a button under "Authentication"; hovering (mouse) or
+   clicking (touch, or to pin it open) unfolds the saved Apple IDs, with
+   "+ Add account" at the bottom. */
+.accounts-menu { position: relative; display: inline-block; vertical-align: middle; margin: 0 0.5rem 1rem 0; max-width: 100%; }
+.accounts-menu[hidden] { display: none; }
+.accounts-toggle { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.7rem 1.4rem; line-height: normal; max-width: 100%; }
+.accounts-icon { line-height: 1; }
+/* line Sign Out up with the account button */
+.accounts-menu ~ #logout-button { vertical-align: middle; margin-bottom: 1rem; }
+.accounts-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.accounts-caret { transition: transform 0.15s ease; font-size: 0.8em; opacity: 0.8; }
+.accounts-panel {
+  display: none; position: absolute; z-index: 30; top: calc(100% + 6px); left: 0;
+  min-width: 18rem; max-width: min(26rem, calc(100vw - 3rem));
+  background: #0f172a; border: 1px solid rgba(148, 163, 184, 0.3); border-radius: 12px;
+  box-shadow: 0 16px 32px rgba(2, 6, 23, 0.55); padding: 0.35rem;
+}
+.accounts-panel::before { content: ""; position: absolute; left: 0; right: 0; top: -8px; height: 8px; } /* hover bridge */
+.accounts-menu.open .accounts-panel { display: block; }
+.accounts-menu.open .accounts-caret { transform: rotate(180deg); }
+@media (hover: hover) {
+  .accounts-menu:hover .accounts-panel { display: block; }
+  .accounts-menu:hover .accounts-caret { transform: rotate(180deg); }
+}
+.accounts-list { list-style: none; margin: 0; padding: 0; }
+.accounts-list li { display: flex; align-items: center; gap: 0.25rem; border-radius: 8px; }
+.accounts-list li + li { margin-top: 2px; }
+.account-row {
+  flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 0.1rem;
+  text-align: left; background: transparent; color: inherit; border-radius: 8px; padding: 0.5rem 0.65rem; font: inherit; font-size: 0.95rem; font-weight: 500;
+}
+button.account-row:hover, button.account-row:focus-visible { background: rgba(52, 120, 246, 0.18); transform: none; }
+.account-row .account-main { overflow-wrap: anywhere; }
+.account-row .account-sub { font-size: 0.8rem; opacity: 0.65; font-weight: 400; }
+.account-row .account-store { font-size: 0.72rem; opacity: 0.5; font-variant-numeric: tabular-nums; }
+.account-row.is-active { cursor: default; }
+.account-row.is-active .account-main::before { content: "✓ "; color: #4ade80; }
+.account-forget {
+  flex: none; background: transparent; color: inherit; opacity: 0.55; padding: 0.3rem 0.55rem; border-radius: 6px; font-weight: 400;
+}
+.account-forget:hover, .account-forget:focus-visible { opacity: 1; background: rgba(239, 68, 68, 0.2); transform: none; }
+.accounts-add {
+  display: block; width: 100%; margin-top: 0.35rem; text-align: left; border-radius: 8px; padding: 0.55rem 0.65rem;
+  background: transparent; color: #93c5fd; border-top: 1px solid rgba(148, 163, 184, 0.2); border-radius: 0 0 8px 8px;
+}
+.accounts-add:hover:not(:disabled) { background: rgba(52, 120, 246, 0.18); transform: none; }
+.accounts-add:disabled { opacity: 0.45; cursor: not-allowed; }
+.accounts-note { margin: 0.35rem 0.65rem 0.25rem; font-size: 0.75rem; }
+
+/* Show/hide button inside password fields */
+.password-wrap { position: relative; display: block; }
+.password-wrap input { width: 100%; box-sizing: border-box; padding-right: 2.75rem; }
+.password-toggle {
+  position: absolute; top: 50%; right: 0.35rem; transform: translateY(-50%);
+  padding: 0.25rem 0.45rem; border-radius: 6px; background: transparent; color: inherit;
+  font-size: 1rem; line-height: 1; opacity: 0.55; font-weight: 400;
+}
+.password-toggle:hover { opacity: 0.95; transform: translateY(-50%); background: rgba(148, 163, 184, 0.15); }
+.password-toggle[aria-pressed="true"] { opacity: 0.95; color: #93c5fd; }
+
+/* "Find App" heading with the Clear cache button on the right. */
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.card-head h2 { margin: 0; }
+
+/* "From the private catalog" notice above the catalog's versions. */
+.notice-info {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;
+  margin: 0 0 1rem; padding: 0.75rem 1rem;
+  border: 1px solid rgba(96, 165, 250, 0.45); border-radius: 10px;
+  background: rgba(59, 130, 246, 0.12); color: #bfdbfe; font-size: 0.9rem; line-height: 1.45;
+}
+
+.site-footer {
+  margin: 2rem 0 1rem;
+  font-size: 0.8rem;
+  text-align: center;
+  opacity: 0.7;
+}
+
+.access-card {
+  width: 100%;
+  max-width: 26rem;
+  margin: 2rem auto 0;
+  box-sizing: border-box;
+}
+
+.access-card .hint {
+  margin: 0 0 1rem;
+  opacity: 0.75;
+  line-height: 1.4;
+}
+
+/* Block layout, no grid or flex gap: also right on old Safari. */
+.access-card .form-grid { display: block; }
+.access-card label { display: block; margin: 0 0 0.4rem; }
+.access-card input[type="password"] { display: block; width: 100%; box-sizing: border-box; margin: 0 0 1rem; }
+.access-card button { display: block; width: 100%; }
+.access-error { margin: 1rem 0 0; color: #f87171; }

@@ -1,0 +1,8 @@
+# Jailbroken iOS 14+ (rootless or rootful), Python 3.9+:
+#   python3 vendor/unicorn/ios/check_deps.py     # missing build packages
+#   pip install -r requirements-ios.txt
+# Unicorn is built from vendor/unicorn (arm64 only), installed into
+# /var/jb/var/mobile/.runtime and signed with ldid; if the JIT test fails the
+# build prints the ldid command that gives Python the JIT entitlement.
+-r requirements-core.txt
+./vendor/unicorn

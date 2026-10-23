@@ -5,16 +5,23 @@ from __future__ import annotations
 ResponseFormatJSON = "json"
 ResponseFormatXML = "xml"
 
+# ipatool's (pkg/http/constants.go). The password token is tied to the
+# User-Agent that signed in. Override with app.py --user-agent.
 DEFAULT_USER_AGENT = "Configurator/2.17 (Macintosh; OS X 15.2; 24C5089c) AppleWebKit/0620.1.16.11.6"
 
 FAILURE_INVALID_CREDENTIALS = "-5000"
 FAILURE_PASSWORD_TOKEN_EXPIRED = "2034"
+# ipatool PR #448: token expiry can also come as this message.
+CUSTOMER_MESSAGE_PASSWORD_CHANGED = "Your password has changed."
 FAILURE_LICENSE_NOT_FOUND = "9610"
 FAILURE_TEMPORARILY_UNAVAILABLE = "2059"
+# Apple's catch-all failure (e.g. an app the account can't get); only for messages.
+FAILURE_UNKNOWN_ERROR = "5002"
 
 CUSTOMER_MESSAGE_BAD_LOGIN = "MZFinance.BadLogin.Configurator_message"
 CUSTOMER_MESSAGE_ACCOUNT_DISABLED = "Your account is disabled."
 CUSTOMER_MESSAGE_SUBSCRIPTION_REQUIRED = "Subscription Required"
+CUSTOMER_MESSAGE_ACTION_SIGN_IN_PAGE = "AMD-Action::SP"
 
 ITUNES_API_DOMAIN = "itunes.apple.com"
 ITUNES_API_SEARCH_PATH = "/search"
@@ -27,11 +34,48 @@ PRIVATE_APPSTORE_HOST = f"buy.{ITUNES_API_DOMAIN}"
 PRIVATE_PURCHASE_PATH = "/WebObjects/MZFinance.woa/wa/buyProduct"
 PRIVATE_DOWNLOAD_PATH = "/WebObjects/MZFinance.woa/wa/volumeStoreDownloadProduct"
 
+
 HTTP_HEADER_STOREFRONT = "X-Set-Apple-Store-Front"
 HTTP_HEADER_POD = "pod"
+HTTP_HEADER_ACTION_SIGNATURE = "X-Apple-ActionSignature"
+
+# Headers AppleMediaServices adds to Store requests with a body (ipatool 5dc4c80);
+# some answers (ent/download) differ without them.
+STORE_FRAMEWORK_HEADERS = {
+    "Accept-Language": "en",
+    "X-Apple-Tz": "0",
+    "X-Apple-Client-Application": "me.majd.ipatool",
+}
+
+# Since August 2026 sign-in goes to the legacy MZFinance endpoint named in
+# the bag, and must carry a SAP signature (ipatool v2.4+ / v2.6.0).
+PRIVATE_APPSTORE_API_PATH_AUTH = "/WebObjects/MZFinance.woa/wa/authenticate"
+SUPPORTED_SAP_VERSION = 200
+# Sign-in tries (ipatool: 3, 10-30 s). Apple rejects many sign-ins at random,
+# so more, shorter-spaced tries work better.
+MAX_AUTH_REQUEST_ATTEMPTS = 8
+AUTH_RETRY_DELAY = 3.0
+MAX_AUTH_RETRY_DELAY = 10.0
 
 PRICING_PARAM_APPSTORE = "STDQ"
 PRICING_PARAM_ARCADE = "GAME"
+
+# --- Networking: timeouts and retries (as ipatool-py) -----------------------
+DEFAULT_CONNECT_TIMEOUT = 10.0
+# ipatool e8a7ba8: login and bag requests are bounded (15s to connect, 30s overall).
+AUTH_CONNECT_TIMEOUT = 15.0
+AUTH_READ_TIMEOUT = 30.0
+# ipatool 1ec8b3e: redirects are counted separately from login attempts.
+MAX_AUTH_REDIRECTS = 4
+DEFAULT_READ_TIMEOUT = 30.0
+DOWNLOAD_READ_TIMEOUT = 25.0
+
+# Mirrors ipatool-py's urllib3 Retry() config mounted on its session.
+RETRY_CONNECT = 4
+RETRY_READ = 4
+RETRY_STATUS = 20
+RETRY_STATUS_FORCELIST = (429, 502, 503)
+RETRY_BACKOFF_FACTOR = 1.0
 
 STORE_FRONTS = {
     "AE": "143481",

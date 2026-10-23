@@ -1,0 +1,970 @@
+/* style.css rebuilt for old WebKit (iOS 6 Safari): same sizes and colours,
+   older layout techniques (floats, inline-block, percentages). Phone layout
+   at <= 640px, as in style.css. */
+
+/* ---------------------------------------------------------------- base -- */
+
+html {
+  background: #0f172a; /* so the page never ends in a white strip */
+  -webkit-text-size-adjust: 100%;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100%;
+  background: #0f172a;
+  color: #f8fafc;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: normal;
+}
+
+*,
+*:before,
+*:after {
+  -webkit-box-sizing: border-box;
+  -moz-box-sizing: border-box;
+  box-sizing: border-box;
+}
+
+a {
+  color: #60a5fa;
+}
+
+b {
+  font-weight: 600;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+}
+
+/* Vertical rhythm between top-level blocks (style.css: flex gap 1.5rem). */
+.container > * {
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+}
+.container > *:last-child {
+  margin-bottom: 0;
+}
+
+.clearfix:after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+h1, h2 {
+  font-weight: 600;
+  margin: 0 0 1rem;
+}
+
+h1 {
+  font-size: 2em;
+}
+
+h2 {
+  font-size: 1.5em;
+}
+
+.legacy-badge {
+  display: inline-block;
+  font-size: 0.5em;
+  font-weight: normal;
+  vertical-align: middle;
+  padding: 0.2em 0.6em;
+  border-radius: 999px;
+  -webkit-border-radius: 999px;
+  background: #334155;
+  color: #93c5fd;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+}
+
+.card {
+  background: #1e293b;
+  border-radius: 16px;
+  -webkit-border-radius: 16px;
+  padding: 1.5rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  -webkit-box-shadow: 0 16px 32px rgba(15, 23, 42, 0.4);
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.4);
+}
+
+/* --------------------------------------------------------------- forms -- */
+
+/* form-grid: one control per row, 1rem apart, everything full width
+   (style.css: display:grid; gap:1rem - grid items stretch). */
+.form-grid > *,
+.form-grid > .hint {
+  display: block;
+  width: 100%;
+  margin: 0 0 1rem;
+}
+.form-grid > *:last-child,
+.form-grid > .hint:last-child {
+  margin-bottom: 0;
+}
+.form-grid > input[type="hidden"] {
+  display: none;
+}
+
+label {
+  display: block;
+  font-size: 0.95rem;
+}
+
+label input,
+label select {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+label.checkbox {
+  display: block;
+  line-height: 1.3;
+}
+
+label.checkbox input {
+  display: inline-block;
+  width: auto;
+  margin: 0 0.5rem 0 0;
+  vertical-align: middle;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+select {
+  display: block;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border-radius: 10px;
+  -webkit-border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background-color: #0f172a;
+  background-color: rgba(15, 23, 42, 0.8);
+  color: #f8fafc;
+  font-size: 0.9rem;
+  font-family: inherit;
+  line-height: normal;
+  -webkit-appearance: none;
+  -webkit-box-shadow: none;
+  box-shadow: none;
+}
+
+/* select: same box as the inputs plus a drawn arrow, since
+   -webkit-appearance:none removes the native one. */
+select {
+  padding-right: 2rem;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2394a3b8' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-position: 95% 50%;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: #3478f6;
+  -webkit-box-shadow: 0 0 0 1px #3478f6;
+  box-shadow: 0 0 0 1px #3478f6;
+}
+
+::-webkit-input-placeholder {
+  color: rgba(226, 232, 240, 0.5);
+}
+
+button {
+  display: inline-block;
+  padding: 0.7rem 1.4rem;
+  border-radius: 999px;
+  -webkit-border-radius: 999px;
+  border: none;
+  background: #3478f6;
+  color: #fff;
+  font-weight: 600;
+  font-size: 13.33px; /* browsers' default button text size, as in style.css */
+  font-family: inherit;
+  line-height: normal;
+  cursor: pointer;
+  -webkit-appearance: none;
+}
+
+button.secondary {
+  background: transparent;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+}
+
+button.small {
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+}
+
+/* form-inline (search): one row on wide screens, a column on phones -
+   same as style.css (flex-wrap row; flex-direction:column <= 640px). */
+/* font-size:0 removes the ~4px gaps that the whitespace between inline-block
+   elements adds; every child sets its own size in rem. */
+.form-inline {
+  font-size: 0;
+}
+.form-inline > * {
+  font-size: 0.95rem;
+  display: inline-block;
+  vertical-align: bottom;
+  margin: 0 0.75rem 0.75rem 0;
+}
+.form-inline > input[type="text"] {
+  display: inline-block; /* beats the generic input { display:block } */
+  width: 11rem;
+}
+.form-inline > *:last-child {
+  margin-right: 0;
+}
+.form-inline > button {
+  font-size: 13.33px;
+}
+/* Wide screens: controls sized to their content, like the modern flex row. */
+.form-inline > label {
+  width: auto;
+}
+.form-inline label input[type="number"] {
+  width: 4.5rem;
+}
+.form-inline label select {
+  width: auto;
+  min-width: 8rem;
+}
+.form-inline > label.checkbox {
+  display: inline-block; /* beats the generic label.checkbox { display:block } */
+  width: auto;
+  padding-bottom: 0.75rem;
+}
+
+/* ------------------------------------------------------ account / auth -- */
+
+.status-box {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 12px;
+  -webkit-border-radius: 12px;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  font-size: 0.95rem;
+}
+
+.status-box h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+/* dt/dd as label | value rows (style.css: grid auto 1fr). */
+.status-box dl,
+.version-details dl {
+  margin: 0;
+}
+.status-box dl:after,
+.version-details dl:after {
+  content: "";
+  display: table;
+  clear: both;
+}
+.status-box dt,
+.version-details dt {
+  float: left;
+  clear: left;
+  margin: 0;
+}
+.status-box dd,
+.version-details dd {
+  margin: 0;
+  word-wrap: break-word;
+}
+
+.status-box dt {
+  width: 5.5rem;
+  font-weight: 600;
+  color: rgba(226, 232, 240, 0.9);
+}
+.status-box dd {
+  margin-left: 6.25rem;
+  margin-bottom: 0.3rem;
+}
+.status-box dd:last-child {
+  margin-bottom: 0;
+}
+
+#logout-button {
+  margin-top: 0;
+}
+
+.account-extra {
+  margin-top: 1rem;
+}
+
+/* Certificate hint for signed-in users; the sign-in form has its own copy. */
+.account-extra[hidden] {
+  display: none;
+}
+
+/* -------------------------------------------------------------- hints -- */
+
+.hint {
+  color: rgba(226, 232, 240, 0.7);
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.hint.center {
+  text-align: center;
+  margin: 0.5rem 0;
+}
+
+.subtitle {
+  color: rgba(226, 232, 240, 0.7);
+  font-size: 0.95rem;
+  margin: 0.25rem 0 0;
+}
+
+.section-header {
+  margin-bottom: 1rem;
+}
+
+.section-header h2 {
+  margin-bottom: 0;
+}
+
+/* --------------------------------------------------------------- tabs -- */
+
+.tab-group {
+  margin-bottom: 1.5rem;
+  border-bottom: 2px solid rgba(148, 163, 184, 0.2);
+}
+.tab-group:after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+/* float, not inline-block: old WebKit stacked inline-block <button>s. */
+.tab-btn {
+  float: left;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin: 0 0.5rem -2px 0;
+  padding: 0.75rem 1.25rem;
+  color: rgba(226, 232, 240, 0.7);
+  font-weight: 500;
+  border-radius: 0;
+  -webkit-border-radius: 0;
+}
+
+.tab-btn.active {
+  color: #3478f6;
+  border-bottom-color: #3478f6;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* ----------------------------------------------------- search results -- */
+
+#search-results {
+  margin-top: 1rem;
+}
+
+.app-card {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 12px;
+  -webkit-border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  cursor: pointer;
+}
+
+.app-card-title {
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+.app-card-meta {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: rgba(226, 232, 240, 0.7);
+}
+
+.app-card-meta > span {
+  display: inline-block;
+  max-width: 100%;
+  margin: 0 1.5rem 0.4rem 0;
+  vertical-align: middle;
+  word-wrap: break-word; /* long bundle ids */
+}
+
+.app-card-id {
+  margin-top: 0.1rem;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  -webkit-border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background: rgba(52, 120, 246, 0.15);
+  color: #60a5fa;
+}
+
+.copy-code {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 6px;
+  -webkit-border-radius: 6px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.copy-icon {
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+
+/* ------------------------------------------------------- version list -- */
+
+.version-card {
+  position: relative;
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 10px;
+  -webkit-border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.version-card.expanded {
+  background: rgba(15, 23, 42, 0.7);
+  border-color: rgba(148, 163, 184, 0.4);
+}
+
+/* Basic info in a fixed 2x2 block (style.css: 2 grid columns on phones,
+   auto-fit on wide screens); expand arrow pinned top-right. */
+.version-header {
+  position: relative;
+  padding-right: 1.5rem;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* inline-block, not float: with floats a cell that wraps onto two lines
+   snags the next one and the 2x2 block falls apart. inline-block rows
+   always line up (the cells are concatenated without whitespace, so
+   50% + 50% fits exactly). */
+.version-basic {
+  font-size: 0.95rem;
+}
+.version-basic > div {
+  display: inline-block;
+  vertical-align: top;
+  width: 25%;
+  padding-right: 0.75rem;
+  margin-bottom: 0.5rem;
+  word-wrap: break-word;
+}
+
+.version-basic strong {
+  color: rgba(226, 232, 240, 0.8);
+  font-weight: 500;
+}
+
+.expand-icon {
+  position: absolute;
+  top: 0.15rem;
+  right: 0;
+  color: rgba(148, 163, 184, 0.6);
+  -webkit-transition: -webkit-transform 0.2s ease;
+}
+
+.version-card.expanded .expand-icon {
+  -webkit-transform: rotate(180deg);
+  transform: rotate(180deg);
+}
+
+.version-details {
+  display: none;
+  margin-top: 0.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.version-card.expanded .version-details {
+  display: block;
+}
+
+.version-details dl {
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+}
+.version-details dt {
+  width: 5.5rem;
+  font-weight: 500;
+  color: rgba(226, 232, 240, 0.8);
+  margin-bottom: 0.5rem;
+}
+.version-details dd {
+  margin-left: 6rem;
+  margin-bottom: 0.5rem;
+}
+
+.version-actions {
+  margin-top: 1rem;
+}
+.version-actions:after {
+  content: "";
+  display: table;
+  clear: both;
+}
+.version-actions button {
+  margin: 0 0.75rem 0.5rem 0;
+}
+
+/* -------------------------------------------------------------- states -- */
+
+.empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: rgba(226, 232, 240, 0.6);
+}
+
+.empty-state-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  opacity: 0.5;
+}
+
+.loading {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(148, 163, 184, 0.3);
+  border-top-color: #3478f6;
+  border-radius: 50%;
+  -webkit-border-radius: 50%;
+  -webkit-animation: legacy-spin 0.6s linear infinite;
+  animation: legacy-spin 0.6s linear infinite;
+}
+
+button.downloading {
+  position: relative;
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+@-webkit-keyframes legacy-spin {
+  from { -webkit-transform: rotate(0deg); }
+  to { -webkit-transform: rotate(360deg); }
+}
+@keyframes legacy-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* --------------------------------------------------- download progress -- */
+
+.download-progress {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: #1e293b;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 12px;
+  -webkit-border-radius: 12px;
+  padding: 1rem 1.5rem;
+  -webkit-box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  z-index: 9998;
+  min-width: 250px;
+}
+.download-progress:after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+.download-progress-spinner {
+  float: left;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-right: 1rem;
+  border: 3px solid rgba(148, 163, 184, 0.3);
+  border-top-color: #3478f6;
+  border-radius: 50%;
+  -webkit-border-radius: 50%;
+  -webkit-animation: legacy-spin 0.8s linear infinite;
+  animation: legacy-spin 0.8s linear infinite;
+}
+
+.download-progress-text {
+  font-size: 0.95rem;
+  font-weight: 500;
+  overflow: hidden;
+}
+
+.download-progress-filename {
+  font-size: 0.85rem;
+  color: rgba(226, 232, 240, 0.7);
+  margin-top: 0.25rem;
+  word-wrap: break-word;
+}
+
+/* --------------------------------------------------------------- toast -- */
+
+#toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  margin-left: -140px;
+  width: 280px;
+  background: #1e293b;
+  color: #f8fafc;
+  padding: 0.85rem 1.5rem;
+  border-radius: 12px;
+  -webkit-border-radius: 12px;
+  -webkit-box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(148, 163, 184, 0.3);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(148, 163, 184, 0.3);
+  z-index: 9999;
+  font-weight: 500;
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+#toast.success {
+  background-color: #059669;
+  background-image: -webkit-linear-gradient(-45deg, #10b981 0%, #059669 100%);
+  background-image: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  -webkit-box-shadow: 0 10px 30px rgba(16, 185, 129, 0.3), 0 0 0 1px rgba(16, 185, 129, 0.5);
+  box-shadow: 0 10px 30px rgba(16, 185, 129, 0.3), 0 0 0 1px rgba(16, 185, 129, 0.5);
+}
+
+#toast.error {
+  background-color: #dc2626;
+  background-image: -webkit-linear-gradient(-45deg, #ef4444 0%, #dc2626 100%);
+  background-image: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  -webkit-box-shadow: 0 10px 30px rgba(239, 68, 68, 0.3), 0 0 0 1px rgba(239, 68, 68, 0.5);
+  box-shadow: 0 10px 30px rgba(239, 68, 68, 0.3), 0 0 0 1px rgba(239, 68, 68, 0.5);
+}
+
+#toast.info {
+  background-color: #2563eb;
+  background-image: -webkit-linear-gradient(-45deg, #3b82f6 0%, #2563eb 100%);
+  background-image: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  -webkit-box-shadow: 0 10px 30px rgba(59, 130, 246, 0.3), 0 0 0 1px rgba(59, 130, 246, 0.5);
+  box-shadow: 0 10px 30px rgba(59, 130, 246, 0.3), 0 0 0 1px rgba(59, 130, 246, 0.5);
+}
+
+/* -------------------------------------------------------------- modals -- */
+
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.75);
+  z-index: 9997;
+  text-align: center;
+  padding: 3rem 1rem;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modal-content {
+  display: inline-block;
+  width: 100%;
+  max-width: 380px;
+  text-align: left;
+  background: #1e293b;
+  border-radius: 16px;
+  -webkit-border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  -webkit-box-shadow: 0 16px 32px rgba(15, 23, 42, 0.4);
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.4);
+  padding: 1.5rem;
+}
+
+.modal-content h3 {
+  margin: 0 0 0.75rem;
+}
+
+.modal-content p {
+  margin: 0 0 1rem;
+}
+
+.modal-actions {
+  margin-top: 1rem;
+}
+.modal-actions button {
+  margin-right: 0.75rem;
+}
+
+.error-text {
+  color: #f87171;
+  font-size: 0.9rem;
+  margin: 0.5rem 0 0;
+}
+
+/* ------------------------------------------------------- phone layout -- */
+
+@media (max-width: 640px) {
+  .container {
+    padding: 1.5rem 1rem;
+  }
+
+  table {
+    font-size: 0.9rem;
+  }
+
+  /* search form becomes a column of full-width controls */
+  .form-inline > *,
+  .form-inline > input[type="text"],
+  .form-inline > label,
+  .form-inline label input[type="number"],
+  .form-inline label select {
+    display: block;
+    width: 100%;
+    margin: 0 0 0.75rem;
+  }
+  .form-inline label input[type="number"],
+  .form-inline label select {
+    margin: 0.25rem 0 0;
+  }
+  .form-inline > label.checkbox {
+    padding-bottom: 0;
+  }
+  .form-inline > button {
+    margin-bottom: 0;
+  }
+
+  /* 2 x 2 basic info, like style.css on phones */
+  .version-basic > div {
+    width: 50%;
+  }
+
+  /* stacked full-width action buttons */
+  .version-actions button {
+    display: block;
+    width: 100%;
+    margin: 0 0 0.5rem;
+  }
+
+  .app-card-meta > span {
+    margin-right: 1rem;
+  }
+
+  /* the account list spans the card instead of running off the screen */
+  #auth-section { position: relative; }
+  #auth-section .accounts-menu { position: static; }
+  #auth-section .accounts-panel { top: auto; left: 0.75rem; right: 0.75rem; width: auto; }
+
+  .modal-content {
+    max-width: none;
+  }
+}
+
+/* "Save on server" is hidden when the server doesn't allow it
+   (browser-session mode without --allow-server-save). */
+.no-server-save .save-server-btn {
+  display: none !important;
+}
+
+/* Round close button of the floating banners (install / manual download).
+   padding:0 matters: the generic button rule's padding turned it into an
+   oval and pushed the cross off-centre. */
+button.banner-close {
+  display: block;
+  width: 28px;
+  height: 28px;
+  min-width: 0;
+  -webkit-flex-shrink: 0;
+  flex-shrink: 0;
+  padding: 0;
+  margin: 0 0 0 0.5rem;
+  border: none;
+  border-radius: 50%;
+  -webkit-border-radius: 50%;
+  background: rgba(148, 163, 184, 0.15);
+  color: rgba(226, 232, 240, 0.8);
+  font-size: 13px;
+  font-weight: normal;
+  line-height: 28px;
+  text-align: center;
+  cursor: pointer;
+  -webkit-box-sizing: border-box;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+}
+button.banner-close.float-right {
+  float: right;
+}
+
+/* "App Store" chip next to the App ID on search results. The
+   itunes.apple.com/app/id<N> form is handed to the App Store app by Safari
+   on every iOS version (iOS 6 included) and redirects to apps.apple.com in
+   desktop browsers. */
+a.appstore-chip {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 6px;
+  -webkit-border-radius: 6px;
+  background: rgba(15, 23, 42, 0.6);
+  color: #f8fafc;
+  font-size: 0.85rem;
+  text-decoration: none;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* Apple Arcade notice above the read-only community list. */
+.notice-warning {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  border-radius: 10px;
+  -webkit-border-radius: 10px;
+  background: rgba(251, 191, 36, 0.12);
+  color: #fde68a;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+/* Apple Arcade: the current version (downloadable) in the community list. */
+.badge-current {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  -webkit-border-radius: 999px;
+  background: rgba(52, 199, 89, 0.18);
+  border: 1px solid rgba(52, 199, 89, 0.5);
+  color: #86efac;
+  font-size: 0.75rem;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* Private catalog: versions Apple refuses (lost) or not checked yet (unknown). */
+.badge-lost, .badge-unknown {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  -webkit-border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.badge-lost {
+  background: rgba(239, 68, 68, 0.16);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+}
+.badge-unknown {
+  background: rgba(148, 163, 184, 0.16);
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  color: #cbd5e1;
+}
+
+/* "Merge version catalogs": versions Apple didn't describe */
+.catalog-extra {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed rgba(128, 128, 128, 0.45);
+}
+.catalog-extra-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  opacity: 0.8;
+}
+
+/* Account switcher */
+/* Account switcher under "Authentication": tap the button (no :hover, it
+   sticks on touch screens). */
+.accounts-menu { position: relative; display: inline-block; vertical-align: middle; margin: 0 8px 12px 0; }
+.accounts-toggle { padding: 0.7rem 1.4rem; line-height: normal; }
+.accounts-icon { line-height: 1; }
+.accounts-menu ~ #logout-button { vertical-align: middle; margin-bottom: 12px; }
+.accounts-caret { font-size: 80%; }
+.accounts-panel { display: none; position: absolute; z-index: 30; top: 100%; left: 0; margin-top: 0; padding-top: 6px; width: 280px; }
+.accounts-menu.open .accounts-panel { display: block; }
+.accounts-list, .accounts-add, .accounts-note { background: #0f172a; color: #f8fafc; }
+.accounts-list { list-style: none; margin: 0; padding: 4px; border: 1px solid #475569; border-bottom: 0; border-radius: 8px 8px 0 0; }
+.accounts-list li { position: relative; overflow: hidden; border-bottom: 1px solid #1e293b; border-radius: 6px; -webkit-border-radius: 6px; }
+.accounts-list li:hover { background: #1c2b4a; }
+.account-row { display: block; width: 100%; overflow: hidden; text-align: left; padding: 6px 34px 6px 8px; background: transparent; color: #f8fafc; border: 0; font-weight: normal; border-radius: 6px; -webkit-border-radius: 6px; -webkit-box-sizing: border-box; box-sizing: border-box; }
+button.account-row { cursor: pointer; }
+button.account-row:hover { background: transparent; }
+.account-row.is-active { font-weight: bold; }
+.account-row, .account-forget { font-size: 14px; }
+.account-main { display: block; word-wrap: break-word; }
+.account-sub { display: block; word-wrap: break-word; font-size: 80%; color: #94a3b8; font-weight: normal; }
+.account-store { font-size: 72%; color: #64748b; }
+.account-forget { position: absolute; top: 50%; right: 4px; margin-top: -13px; padding: 4px 8px; background: transparent; color: #94a3b8; border: 0; border-radius: 4px; -webkit-border-radius: 4px; }
+.account-forget:hover { color: #f87171; background: rgba(239, 68, 68, 0.15); }
+.accounts-add { display: block; width: 100%; text-align: left; margin: 0; padding: 8px 12px; border-radius: 0; border: 1px solid #475569; border-top: 1px solid #1e293b; border-bottom: 0; color: #93c5fd; font-weight: bold; }
+.accounts-add[disabled] { color: #64748b; }
+.accounts-note { margin: 0; padding: 4px 12px 8px; font-size: 75%; border: 1px solid #475569; border-top: 0; border-radius: 0 0 8px 8px; }
+
+/* Show/hide button inside password fields */
+.password-wrap { position: relative; display: block; }
+.password-wrap input { width: 100%; -webkit-box-sizing: border-box; box-sizing: border-box; padding-right: 44px; }
+.password-toggle { position: absolute; top: 50%; right: 5px; margin-top: -14px; height: 28px; padding: 0 8px; border-radius: 6px; -webkit-border-radius: 6px; background: transparent; color: #f8fafc; border: 0; font-size: 16px; line-height: 28px; opacity: 0.6; font-weight: normal; }
+.password-toggle.on { opacity: 1; color: #93c5fd; }
+
+/* "Find App" heading with the Clear cache button on the right. */
+.card-head { overflow: hidden; margin-bottom: 12px; }
+.card-head h2 { float: left; margin: 0; }
+.card-head button { float: right; }
+
+/* "From the private catalog" notice above the catalog's versions. */
+.notice-info {
+  margin: 0 0 1rem; padding: 0.75rem 1rem;
+  border: 1px solid rgba(96, 165, 250, 0.45); border-radius: 10px; -webkit-border-radius: 10px;
+  background: rgba(59, 130, 246, 0.12); color: #bfdbfe; font-size: 0.9rem; line-height: 1.45;
+}
+.notice-info button { margin-top: 6px; }
+
+.site-footer {
+  margin: 2rem 0 1rem;
+  font-size: 0.8rem;
+  text-align: center;
+  opacity: 0.7;
+}

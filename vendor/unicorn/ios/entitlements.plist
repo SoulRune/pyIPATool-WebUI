@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- pyIPATool (iOS): entitlements Python needs for Unicorn's JIT on a
+     jailbroken device. setup.py prints the ldid command if the JIT smoke test
+     fails:  sudo ldid -M -S<this file> <real path of python3>
+     (-M merges them into the binary's existing entitlements). -->
+<plist version="1.0">
+<dict>
+	<key>dynamic-codesigning</key>
+	<true/>
+	<key>com.apple.private.skip-library-validation</key>
+	<true/>
+</dict>
+</plist>

@@ -1,31 +1,61 @@
 {% extends "layout.html" %}
 
 {% block content %}
+{% macro ca_hint() %}{% if ca_available %}
+    <p class="hint ca-hint">📲 Over-the-air installs need this device to trust the server:
+      <a href="{{ request.script_root }}/ca.crt">install the certificate</a>, then turn it on in
+      Settings &gt; General &gt; About &gt; <b>Certificate Trust Settings</b>.</p>
+{% endif %}{% endmacro %}
 <section id="auth-section" class="card">
   <h2>Authentication</h2>
+  <div id="accounts-box" class="accounts-menu" hidden>
+    <button type="button" id="accounts-toggle" class="accounts-toggle secondary" aria-haspopup="true" aria-expanded="false"
+            title="Saved Apple IDs: switch without the password, or add another one">
+      <span class="accounts-icon" aria-hidden="true">👤</span>
+      <span id="accounts-current" class="accounts-current">Accounts</span>
+      <span class="accounts-caret" aria-hidden="true">▾</span>
+    </button>
+    <div id="accounts-panel" class="accounts-panel">
+      <ul id="accounts-list" class="accounts-list"></ul>
+      <button type="button" id="add-account-button" class="accounts-add"
+              title="Keep this sign-in and sign in with another Apple ID">+ Add account</button>
+      <p class="hint accounts-note">Kept {% if session_mode == 'browser' %}in this browser's encrypted cookie{% else %}on this computer{% endif %}. Switching needs no password or code.</p>
+    </div>
+  </div>
   <form id="login-form" class="form-grid">
     <label>Email
       <input type="email" name="email" required>
     </label>
     <label>Password
-      <input type="password" name="password" required>
+      <span class="password-wrap">
+        <input type="password" name="password" required autocomplete="current-password">
+        <button type="button" class="password-toggle" data-password-toggle aria-label="Show password" title="Show password" aria-pressed="false">👁</button>
+      </span>
     </label>
-    <p id="auth-code-message" class="hint" hidden>Two-factor authentication required. Enter the code Apple just sent and submit again.</p>
+    {% if not sap_available %}
+    <p class="hint">⚠️ Sign-in is unavailable: the server is missing the <code>unicorn</code> package. On the server: {{ sap_install_hint }}.</p>
+    {% endif %}
+    <p class="hint">The first sign-in after installing takes a little longer: the server fetches Apple's sign-in components once (about 210 MB, a minute or two).</p>
+    {% if session_mode == 'browser' %}
+    <p class="hint">🔒 Your sign-in is kept only in this browser, in an encrypted cookie. Other people using this server sign in with their own Apple ID and can't see your session. Signing out (or clearing this site's data) removes it.</p>
+    {% else %}
+    <p class="hint">🔒 Local mode: the session is stored on this computer in ~/.ipatool.</p>
+    {% endif %}
+    <p id="auth-code-message" class="hint" hidden>Two-factor code required. Enter the code shown on your Apple device and submit again. No code appeared? Then the password is most likely wrong (Apple answers both the same way).</p>
+    <p id="login-error" class="error-text" role="alert" hidden></p>
     <button type="submit">Sign In</button>
+    {{ ca_hint() }}
   </form>
   <button id="logout-button" class="secondary" hidden>Sign Out</button>
-  <div id="account-info" class="status-box" hidden>
-    <h3>Active Account</h3>
-    <dl>
-      <dt>Name</dt><dd data-field="name">N/A</dd>
-      <dt>Email</dt><dd data-field="email">N/A</dd>
-      <dt>Storefront</dt><dd data-field="storeFront">N/A</dd>
-    </dl>
-  </div>
+  <div class="account-extra" id="account-extra" hidden>{{ ca_hint() }}</div>
 </section>
 
 <section class="card" id="app-finder-section" hidden>
-  <h2>Find App</h2>
+  <div class="card-head">
+    <h2>Find App</h2>
+    <button type="button" class="secondary small" id="clear-cache-button"
+            title="Forget cached version data on the server: private catalog and community lists, release dates, minimum iOS, Apple Arcade checks. Your sign-in stays. The next lookups take a little longer.">{% if legacy %}♻️{% else %}🧹{% endif %} Clear cache</button>
+  </div>
   <div class="tab-group">
     <button type="button" class="tab-btn active" data-tab="search">Search Store</button>
     <button type="button" class="tab-btn" data-tab="direct">Direct Lookup</button>
@@ -37,12 +67,34 @@
       <label>Limit
         <input type="number" name="limit" value="3" min="1" max="50">
       </label>
-      <label class="checkbox">
-        <input type="checkbox" name="includeTvos" id="tvos-checkbox"> Include tvOS
+      <label>Platform
+        <select name="platform" id="platform-select">
+          <option value="">iPhone + iPad</option>
+          <option value="iphone">iPhone only</option>
+          <option value="ipad">iPad only</option>
+          <option value="appletv">Apple TV</option>
+          <option value="visionos">Apple Vision Pro (visionOS)</option>
+          <option value="watch">Apple Watch (apps with a watch app)</option>
+        </select>
+      </label>
+      <label title="Search another country's App Store - e.g. for an app removed from your account's store. Whether it can be downloaded is still up to Apple for your account.">Region
+        <select name="country" id="region-select">
+          <option value="">My account</option>
+          {% for code in store_regions %}<option value="{{ code }}">{{ code }}</option>{% endfor %}
+        </select>
+      </label>
+      {% if catalog_available %}<label class="checkbox" title="If the private version catalog has this app, show its versions right away (with what the collector recorded) instead of asking Apple; an 'Ask Apple' button loads Apple's own list. Apps the catalog doesn't have go to Apple as usual.">
+        <input type="checkbox" name="catalogFirst" id="catalog-first-checkbox"> Private catalog first
+      </label>
+      {% endif %}      <label class="checkbox" title="If Apple refuses an app for a reason unrelated to licensing (e.g. Chrome), automatically try an independent, crowd-sourced version database (Timbrd) instead. A genuine 'you need a license' response always goes through the normal purchase flow, never this.">
+        <input type="checkbox" name="communityFallback" id="community-fallback-checkbox"> Fall back to community DB (Timbrd)
+      </label>
+      <label class="checkbox" title="Also list versions only the version catalogs know (private catalog, Timbrd, bilin), ask Apple about each of them, and keep versions Apple doesn't describe - shown from the catalogs, marked, still downloadable. More requests to Apple, so slower.">
+        <input type="checkbox" name="mergeCatalogs" id="merge-catalogs-checkbox"> Merge version catalogs (slower)
       </label>
       <button type="submit">Search</button>
     </form>
-    <p id="tvos-hint" class="hint" style="margin-top: 1rem;" hidden>💡 Tip: Searching with tvOS enabled finds tvOS apps, but versions shown will be iOS by default. Use Direct Lookup with a tvOS Version ID to view related tvOS versions.</p>
+    <p id="platform-hint" class="hint" style="margin-top: 1rem;" hidden>💡 Apple TV: version list starts from the latest tvOS build (resolved separately from the iPhone/iPad build, since most apps share one App Store listing across platforms). Older tvOS versions show up if Apple still serves them from that same version chain.</p>
     <div id="search-results" hidden></div>
   </div>
 
@@ -51,13 +103,31 @@
       <label>App ID
         <input type="number" name="appId" placeholder="123456789">
       </label>
-      <p class="hint center">— OR —</p>
+      <p class="hint center">OR</p>
       <label>Bundle Identifier
         <input type="text" name="bundleId" placeholder="com.example.app">
       </label>
       <div style="border-top: 1px solid rgba(148, 163, 184, 0.2); margin: 0.5rem 0;"></div>
+      <label>Platform
+        <select name="platform" id="direct-platform-select">
+          <option value="">iPhone + iPad</option>
+          <option value="iphone">iPhone only</option>
+          <option value="ipad">iPad only</option>
+          <option value="appletv">Apple TV</option>
+          <option value="visionos">Apple Vision Pro (visionOS)</option>
+        </select>
+      </label>
       <label>Version ID (optional filter)
         <input type="text" name="externalVersionId" placeholder="Filter by specific version ID">
+      </label>
+      {% if catalog_available %}<label class="checkbox" title="If the private version catalog has this app, show its versions right away (with what the collector recorded) instead of asking Apple; an 'Ask Apple' button loads Apple's own list. Apps the catalog doesn't have go to Apple as usual.">
+        <input type="checkbox" name="catalogFirst" id="direct-catalog-first-checkbox"> Private catalog first
+      </label>
+      {% endif %}      <label class="checkbox" title="If Apple refuses an app for a reason unrelated to licensing (e.g. Chrome), automatically try an independent, crowd-sourced version database (Timbrd) instead. A genuine 'you need a license' response always goes through the normal purchase flow, never this.">
+        <input type="checkbox" name="communityFallback" id="direct-community-fallback-checkbox"> Fall back to community DB (Timbrd)
+      </label>
+      <label class="checkbox" title="Also list versions only the version catalogs know (private catalog, Timbrd, bilin), ask Apple about each of them, and keep versions Apple doesn't describe - shown from the catalogs, marked, still downloadable. More requests to Apple, so slower.">
+        <input type="checkbox" name="mergeCatalogs" id="direct-merge-catalogs-checkbox"> Merge version catalogs (slower)
       </label>
       <p class="hint">Provide an App ID or Bundle ID above. Optionally add a Version ID to filter related versions.</p>
       <button type="submit">Load Versions</button>
@@ -78,7 +148,7 @@
 <div id="auth-modal" class="modal" hidden>
   <form id="auth-modal-form" class="modal-content">
     <h3>Verification Required</h3>
-    <p id="auth-modal-message">Enter the verification code Apple just sent to continue.</p>
+    <p id="auth-modal-message">Enter the code shown on your Apple device. No code appeared? Then the password is most likely wrong.</p>
     <label>Auth Code
       <input id="auth-modal-input" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" maxlength="8" minlength="4" required>
     </label>

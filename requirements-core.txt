@@ -1,0 +1,12 @@
+# Python 3.9+. Everything except Unicorn (pure Python, any platform).
+Flask>=3.1,<4
+Werkzeug>=3.1,<4
+Jinja2>=3.1.6,<4
+itsdangerous>=2.2,<3
+requests>=2.32.4,<3
+# HTTP server (app.py falls back to Flask's own without it)
+waitress>=3.0.1,<4
+# --proxy socks5://...
+PySocks>=1.7.1
+# Optional: `pip install cryptography` for AES-256-GCM session cookies
+# (a standard-library cipher is used otherwise).

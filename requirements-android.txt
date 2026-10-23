@@ -1,0 +1,8 @@
+# Android (Termux), Python 3.9+:
+#   pkg install python clang cmake make
+#   pip install -r requirements-android.txt
+# Unicorn is built from vendor/unicorn (arm64 only, ends with a JIT test).
+# lzfse is optional: remove the line if it fails to build.
+-r requirements-core.txt
+./vendor/unicorn
+lzfse>=0.4.2

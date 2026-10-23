@@ -1,0 +1,43 @@
+pyIPATool-WebUI (extended fork)
+================================
+
+Copyright (C) 2026 SoulRune and contributors.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, version 3 (see LICENSE). It comes WITHOUT ANY WARRANTY.
+
+If you run a modified version as a network service, section 13 of the AGPL
+requires you to offer its source to its users: the page footer links to
+--source-url, or to /source (an archive of the running copy) when none is set.
+
+
+Original project
+----------------
+
+Based on pyIPATool-WebUI by John Schmudde
+(https://github.com/jschmudd14/pyIPATool-WebUI). That repository carries no
+license file; John Schmudde gave written permission (e-mail, 22 October 2026)
+to publish this fork, including his original code, under the GNU AGPL-3.0.
+His code remains Copyright (C) 2026 John Schmudde.
+
+
+Third-party code
+----------------
+
+ipatool - Copyright (c) 2021 Majd Alfhaily, MIT License
+  https://github.com/majd/ipatool
+  The App Store protocol handling and the SAP signing code in
+  ipatool_api/services/sap/ are Python ports of ipatool's Go code.
+  License text: LICENSES/ipatool-MIT.txt
+
+Unicorn Engine 2.1.4 - GPLv2 (C core), BSD (Python binding)
+  https://github.com/unicorn-engine/unicorn
+  vendor/unicorn/ - a modified copy for jailbroken iOS and Android builds,
+  under its own licenses (vendor/unicorn/src/COPYING and the other files
+  listed in vendor/README.md), not under the AGPL. On other platforms the
+  unicorn package is installed from PyPI.
+
+Python packages installed from PyPI (requirements*.txt) keep their own
+licenses. Apple's framework files used for sign-in signatures are downloaded
+from Apple at first use and are not part of this repository.

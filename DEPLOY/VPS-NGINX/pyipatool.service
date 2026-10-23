@@ -1,0 +1,26 @@
+# /etc/systemd/system/pyipatool.service
+# Replace ipa.example.org with your domain.
+[Unit]
+Description=pyIPATool WebUI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ipatool
+Environment=HOME=/var/lib/ipatool
+WorkingDirectory=/opt/pyIPATool-WebUI
+ExecStart=/opt/pyIPATool-WebUI/.venv/bin/python app.py --host 127.0.0.1 --port 5002 --behind-proxy --trusted-host ipa.example.org --access-password-file /etc/pyipatool/access --emulators 1 --max-downloads 1 --legacy
+Restart=on-failure
+# Limits, so the rest of the server keeps working
+MemoryMax=900M
+CPUWeight=50
+Nice=10
+# No access to the rest of the system
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/ipatool
+
+[Install]
+WantedBy=multi-user.target
