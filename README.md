@@ -47,14 +47,15 @@ unavailable (the page says so).
 | Platform | Server | Sign-in |
 |---|---|---|
 | Windows x64/x86, macOS, Linux x86_64/aarch64/i686 (glibc or musl) | yes | yes |
-| Linux 32-bit ARM (old Raspberry Pi OS) | yes | Unicorn built from source (`apt install cmake build-essential`), untested |
-| Android (Termux) | yes | `requirements-android.txt`, untested on a device |
-| iOS 14+, jailbroken (Procursus Python) | yes | `requirements-ios.txt`, untested on a device |
+| Linux 32-bit ARM (old Raspberry Pi OS) | Unknown | Unicorn built from source (`apt install cmake build-essential`), untested |
+| Android (Termux) | InDev | `requirements-android.txt`, untested on a device |
+| iOS 14+, jailbroken (Procursus Python) | InDev | `requirements-ios.txt`, untested on a device |
 
 To start without waiting for a Unicorn build: `pip install -r
 requirements-core.txt` (everything except Unicorn).
 
 ### Jailbroken iOS and Android
+#### [InDev State. DoNotUse]
 
 ```sh
 # iOS 14+, jailbroken
