@@ -7,19 +7,22 @@ and tvOS builds, and install them over the air. Apple ID sign-in with
 two-factor authentication, several saved accounts, a REST API. Python (Flask)
 backend, plain JavaScript frontend, plus a separate UI for old browsers
 (iOS 6).
-
-<img width="2018" height="4448" alt="image" src="https://github.com/user-attachments/assets/ec40a529-51bb-4032-9ec5-6bce70532a71" />
-
-<img width="1931" height="1145" alt="image" src="https://github.com/user-attachments/assets/362fdf7c-57df-435e-a386-78929d833e27" />
+#### [InDev state]
 
 ----
-#### ATTENTION! For now, this repository contains a pre-added, semi-private repository with metadata for several Apple Arcade games (private version catalog testing).
+#### ATTENTION! For now, this repository contains pre-added, semi-private repository with metadata for several Apple Arcade games (private version catalog testing).
 #### Keeping the "token" and "repo" fields filled is allowed for personal use only. Sharing or hosting is strictly prohibited.
 #### If this tool is used for sharing or hosting, you must clear the repo and token values in the BUILTIN_CATALOG constant located in the /ipatool_api/services/appstore.py file.
 ----
 ##### NOTE: The modified Unicorn emulator in the /vendor/ folder is currently not working. Development is still in progress to bring Android and iOS support to this tool.
 ##### Please do not use the tool on these platforms for now, and do not attempt to install "requirements-ios.txt" or "requirements-android.txt".
 ----
+
+<img width="924" height="612" alt="изображение" src="https://github.com/user-attachments/assets/0f7abd2f-a814-4993-8d4c-76dea35a4b5d" />
+
+<img width="924" height="1797" alt="изображение" src="https://github.com/user-attachments/assets/c901e7a3-9119-46b0-8ca0-6a96e806a2e2" />
+
+<img width="924" height="740" alt="изображение" src="https://github.com/user-attachments/assets/e2f668a3-674a-43d3-a6b8-c24b148ffc38" />
 
 ## Quick start
 
