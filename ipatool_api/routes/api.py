@@ -498,6 +498,18 @@ def list_versions():
     return jsonify(body)
 
 
+@api_bp.get("/app-info")
+def app_info():
+    """{name, bundleId, version} from the public App Store lookup (the
+    versions header in Direct Lookup)."""
+    params = request.args or {}
+    try:
+        account = _service().account_info()
+    except Exception:  # noqa: BLE001 - not signed in: the lookup is public anyway
+        account = Account(email="", password_token="", directory_services_id="", name="", store_front="")
+    return jsonify(_service().app_info(account, params.get("appId") or "", params.get("bundleId") or ""))
+
+
 @api_bp.get("/versions/community")
 def list_versions_community():
     """Version list from a third-party, crowd-sourced database (Timbrd). The

@@ -22,6 +22,7 @@ def fake_login(self, email, password, auth_code=None, rotate_session=True):
 
 
 AppStoreService.login = fake_login
+AppStoreService.BUILTIN_CATALOG = dict(AppStoreService.BUILTIN_CATALOG, repo="")  # checked without the built-in one
 from ipatool_api.services import catalog  # noqa: E402
 
 sys.argv = ["x"]

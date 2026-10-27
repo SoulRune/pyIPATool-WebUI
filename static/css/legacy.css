@@ -540,6 +540,13 @@ button.small {
   margin-left: 6rem;
   margin-bottom: 0.5rem;
 }
+/* A label on two lines is taller than its value: the next row starts below
+   it, not beside it. */
+.version-details dd:after {
+  content: "";
+  display: block;
+  clear: left;
+}
 
 .version-actions {
   margin-top: 1rem;
@@ -764,6 +771,7 @@ button.downloading {
     margin: 0.25rem 0 0;
   }
   .form-inline > label.checkbox {
+    display: block; /* one per line, not two run together */
     padding-bottom: 0;
   }
   .form-inline > button {
@@ -793,6 +801,39 @@ button.downloading {
 
   .modal-content {
     max-width: none;
+  }
+}
+
+/* Phones in portrait: one field per line (as style.css). */
+@media (max-width: 480px) {
+  /* "Find App" and Clear cache on one line; the two tabs side by side */
+  .card-head button {
+    padding: 0.45rem 0.8rem;
+    font-size: 0.85rem;
+  }
+  .tab-btn {
+    padding: 0.6rem 0.75rem;
+    margin-right: 0.25rem;
+  }
+
+  .version-basic > div {
+    display: block;
+    width: auto;
+    margin-bottom: 0.3rem;
+  }
+
+  /* details of an opened card: the label above its value */
+  .version-details dt {
+    float: none;
+    width: auto;
+    font-size: 80%;
+    margin: 0.6rem 0 0;
+  }
+  .version-details dt:first-child {
+    margin-top: 0;
+  }
+  .version-details dd {
+    margin: 0;
   }
 }
 
@@ -880,6 +921,22 @@ a.appstore-chip {
   white-space: nowrap;
 }
 
+/* The version as the App Store shows it, when the Info.plist one differs. */
+.badge-store {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  -webkit-border-radius: 999px;
+  background: rgba(59, 130, 246, 0.16);
+  border: 1px solid rgba(96, 165, 250, 0.5);
+  color: #bfdbfe;
+  font-size: 0.75rem;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 /* Private catalog: versions Apple refuses (lost) or not checked yet (unknown). */
 .badge-lost, .badge-unknown {
   display: inline-block;
@@ -950,9 +1007,15 @@ button.account-row:hover { background: transparent; }
 .password-toggle.on { opacity: 1; color: #93c5fd; }
 
 /* "Find App" heading with the Clear cache button on the right. */
-.card-head { overflow: hidden; margin-bottom: 12px; }
-.card-head h2 { float: left; margin: 0; }
-.card-head button { float: right; }
+/* Old flexbox first (iOS 6), then the current one: title and button
+   centred on one line. */
+.card-head {
+  display: -webkit-box; display: -webkit-flex; display: flex;
+  -webkit-box-align: center; -webkit-align-items: center; align-items: center;
+  margin-bottom: 12px;
+}
+.card-head h2 { -webkit-box-flex: 1; -webkit-flex: 1; flex: 1; margin: 0 0.5rem 0 0; }
+.card-head button { margin: 0; white-space: nowrap; }
 
 /* "From the private catalog" notice above the catalog's versions. */
 .notice-info {

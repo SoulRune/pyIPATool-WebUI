@@ -137,7 +137,7 @@ def clear_version_caches() -> int:
 
     count = catalog.clear_cache()
     for cache in (_CATALOG_CACHE, _ARCADE_CACHE, _MIN_OS_CACHE, _MIN_OS_MISS_CACHE, _APPS_SITE_BACKOFF,
-                  _DOWNLOAD_STAGE_HINTS, _ENT_DOWNLOAD_REFUSED):
+                  _DOWNLOAD_STAGE_HINTS, _ENT_DOWNLOAD_REFUSED, _CURRENT_LABEL_CACHE):
         with cache._lock:
             count += len(cache._data)
             cache._data.clear()
@@ -363,6 +363,8 @@ _KNOWN_VERSIONS_LOCK = threading.Lock()
 # apps.apple.com catalog API answers per (app, storefront, platform).
 _CATALOG_CACHE = _TTLCache(30 * 60)
 _CATALOG_URL = "https://apps.apple.com/api/apps/v1/catalog/{cc}/apps/{id}?platform={platform}"
+# (app id, storefront) -> (current externalVersionId, its App Store label)
+_CURRENT_LABEL_CACHE = _TTLCache(10 * 60)
 # (DSID, device GUID) that ent/download answered 401/403: skip it for a while.
 _ENT_DOWNLOAD_REFUSED = _TTLCache(5 * 60)
 _ENT_DOWNLOAD_REFUSAL_MINUTES = 5
@@ -538,7 +540,13 @@ def _parse_catalog_app(data: Any, app: App, platform: str) -> Dict[str, Any]:
     version = str(ios.get("externalVersionId") or "")
     if not version.isdigit() or int(version) == 0:
         version = ""
-    return {"externalVersionId": version, "bundleId": bundle_id, "supportsArcade": bool(attributes.get("supportsArcade"))}
+    # The current version's App Store label, when the answer has one.
+    label = ios.get("versionDisplay")
+    history = ios.get("versionHistory")
+    if not label and isinstance(history, list) and history and isinstance(history[0], dict):
+        label = history[0].get("versionDisplay")
+    return {"externalVersionId": version, "bundleId": bundle_id, "supportsArcade": bool(attributes.get("supportsArcade")),
+            "versionDisplay": str(label or "").strip()}
 
 
 def phone_number_storefront(apple_id: str) -> str:
@@ -1225,6 +1233,36 @@ class AppStoreService:
             raise AppNotFoundError("app not found", metadata=result.data)
         return App.from_dict(results[0])
 
+    def app_info(self, account: Account, app_id: str = "", bundle_id: str = "") -> Dict[str, str]:
+        """Name, bundle id and current App Store version from the public lookup
+        (the account's storefront, then US); empty values if Apple has nothing."""
+        query = {"id": str(app_id)} if str(app_id or "").isdigit() else {"bundleId": str(bundle_id or "")}
+        if not any(query.values()):
+            return {"name": "", "bundleId": "", "version": ""}
+        try:
+            own = self._country_code_from_storefront(account.store_front).lower()
+        except Exception:  # noqa: BLE001 - not signed in
+            own = "us"
+        for country in dict.fromkeys((own, "us")):
+            request = HTTPRequest(
+                method="GET",
+                url=self._build_query_url(constants.ITUNES_API_LOOKUP_PATH,
+                                          dict(query, country=country, media="software")),
+                headers={},
+                payload=None,
+                response_format=constants.ResponseFormatJSON,
+            )
+            try:
+                results = self._send_request(request).data.get("results") or []
+            except AppStoreError as exc:
+                logger.debug("app info lookup failed: %s", exc)
+                continue
+            item = next((r for r in results if isinstance(r, dict) and r.get("trackId")), None)
+            if item:
+                return {"name": str(item.get("trackName") or ""), "bundleId": str(item.get("bundleId") or ""),
+                        "version": str(item.get("version") or "")}
+        return {"name": "", "bundleId": "", "version": ""}
+
     # ------------------------------------------------------------------
     # Purchasing & downloading
     # ------------------------------------------------------------------
@@ -1580,6 +1618,8 @@ class AppStoreService:
             checked_at=info.get("checkedAt"),
             build=str(info["build"]) if info.get("build") else None,
             minimum_os=str(info["minimumOs"]) if info.get("minimumOs") else None,
+            # Recorded by the collector while the version was the current one.
+            store_version=str(info["storeLabel"]) if info.get("storeLabel") else None,
             release_date_display=str(info["releaseDateDisplay"]) if info.get("releaseDateDisplay") else None,
             artist=str(info["artist"]) if info.get("artist") else None,
             genre=str(info["genre"]) if info.get("genre") else None,
@@ -1636,7 +1676,9 @@ class AppStoreService:
                     existing.also_in.append(name)
         if not used:
             raise AppStoreError("community version lookup failed (" + "; ".join(errors) + ")")
-        entries = sorted(merged.values(), key=lambda e: (e.created_at or "", e.external_version_id), reverse=True)
+        # Newest first, as in the private catalog: version ids grow with each release.
+        entries = sorted(merged.values(), key=lambda e: int(e.external_version_id)
+                         if str(e.external_version_id).isdigit() else 0, reverse=True)
         return CommunityVersionsOutput(source="+".join(used), entries=entries)
 
     # ------------------------------------------------------------------
@@ -1812,7 +1854,9 @@ class AppStoreService:
         
         display_version = str(metadata.get("bundleShortVersionString", "N/A"))
         release = self._release_date_from_metadata(metadata, result.headers)
-        history_date = self._app_store_history_dates(account, app).get(display_version)
+        history = self._app_store_history_dates(account, app)
+        store_version = self._store_version(account, app, version_id)
+        history_date = history.get(store_version or display_version)
         if history_date:
             release = self._parse_apple_date(history_date)
         release_display = self._release_date_display(account, app, metadata, release)
@@ -1837,6 +1881,7 @@ class AppStoreService:
             copyright_info=str(metadata.get("copyright", "N/A")),
             minimum_os=min_os,
             minimum_os_name=min_os_name,
+            store_version=store_version,
         )
 
     @contextlib.contextmanager
@@ -2020,6 +2065,44 @@ class AppStoreService:
         if original_release:
             return f"Unknown ({original_release.date().isoformat()})"
         return "Unknown"
+
+    def current_store_version(self, account: Account, app: App) -> Tuple[str, str]:
+        """(externalVersionId, label) of the version the App Store sells now,
+        both from the same source: the App Store catalog API (with the public
+        lookup's version when the catalog has no label), else the app's page
+        (its current id and the newest version-history entry). ("", "") if unknown."""
+        try:
+            country = self._country_code_from_storefront(account.store_front).lower()
+        except Exception:  # noqa: BLE001
+            country = "us"
+        cached = _CURRENT_LABEL_CACHE.get((int(app.id), country))
+        if cached is not None:
+            return cached
+        found = self._current_store_version(account, app, country)
+        if found[0]:
+            _CURRENT_LABEL_CACHE.set((int(app.id), country), found)
+        return found
+
+    def _current_store_version(self, account: Account, app: App, country: str) -> Tuple[str, str]:
+        for cc in dict.fromkeys((country, "us")):
+            catalog = self._catalog_app(app, cc)
+            if catalog and catalog.get("externalVersionId"):
+                label = catalog.get("versionDisplay") or self.app_info(account, app_id=str(app.id)).get("version", "")
+                return str(catalog["externalVersionId"]), str(label or "")
+        page_id = self._web_external_version_id(account, app)
+        history = self._app_store_history_dates(account, app)
+        if page_id and history:
+            return str(page_id), next(iter(history))
+        return "", ""
+
+    def _store_version(self, account: Account, app: App, version_id: str) -> str:
+        """The App Store's label of this version if it's the one on sale now,
+        else "" (labels of older versions can't be matched reliably; the
+        collector keeps each one from the time it was on sale)."""
+        if not str(version_id or ""):
+            return ""
+        current_id, label = self.current_store_version(account, app)
+        return label if current_id == str(version_id) else ""
 
     def _app_store_history_dates(self, account: Account, app: App) -> Dict[str, str]:
         page = self._app_store_page(account, app)

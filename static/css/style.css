@@ -549,6 +549,7 @@ button.downloading::after {
 
   .form-inline {
     flex-direction: column;
+    flex-wrap: nowrap; /* wrapped, the column took the width of its longest label */
   }
 
   table {
@@ -567,6 +568,41 @@ button.downloading::after {
   /* action buttons don't fit side by side on a phone: stack them */
   .version-actions button {
     flex: 1 1 100%;
+  }
+}
+
+/* Phones in portrait: one field per line, so "Size: 366.02 MB" isn't broken
+   in two and an App Store badge doesn't push the grid out of line. */
+@media (max-width: 480px) {
+  .tab-btn {
+    padding: 0.6rem 0.75rem;
+  }
+  .card .card-head { /* beats the .card-head rule further down */
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+  }
+  .card-head button {
+    padding: 0.45rem 0.8rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+
+  .version-basic {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.3rem;
+  }
+
+  /* details of an opened card: the label above its value */
+  .version-details dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .version-details dt {
+    font-size: 0.8rem;
+    margin-top: 0.6rem;
+  }
+  .version-details dt:first-child {
+    margin-top: 0;
   }
 }
 
@@ -664,6 +700,22 @@ a.appstore-chip {
   background: rgba(52, 199, 89, 0.18);
   border: 1px solid rgba(52, 199, 89, 0.5);
   color: #86efac;
+  font-size: 0.75rem;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* The version as the App Store shows it, when the Info.plist one differs. */
+.badge-store {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  -webkit-border-radius: 999px;
+  background: rgba(59, 130, 246, 0.16);
+  border: 1px solid rgba(96, 165, 250, 0.5);
+  color: #bfdbfe;
   font-size: 0.75rem;
   font-weight: 600;
   vertical-align: middle;

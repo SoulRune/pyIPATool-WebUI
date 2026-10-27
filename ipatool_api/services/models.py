@@ -144,10 +144,12 @@ class CommunityVersionEntry:
     genre: Optional[str] = None
     age_rating: Optional[str] = None
     copyright: Optional[str] = None
+    store_version: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "build": self.build,
+            "storeVersion": self.store_version,
             "minimumOs": self.minimum_os,
             "releaseDateDisplay": self.release_date_display,
             "artist": self.artist,
@@ -188,12 +190,16 @@ class GetVersionMetadataOutput:
     copyright_info: str
     minimum_os: str = ""        # e.g. "15.0", from the version's Info.plist; "" if unknown
     minimum_os_name: str = ""   # "iOS", "tvOS", "watchOS", "macOS"
+    # The App Store's label, only for the version on sale now; can differ from
+    # the Info.plist one in display_version. "" otherwise.
+    store_version: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "minimumOsVersion": self.minimum_os,
             "minimumOsName": self.minimum_os_name,
             "displayVersion": self.display_version,
+            "storeVersion": self.store_version,
             "buildNumber": self.build_number,
             "releaseDate": self.release_date.isoformat() if self.release_date else None,
             "releaseDateDisplay": self.release_date_display,

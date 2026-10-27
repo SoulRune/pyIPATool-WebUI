@@ -47,9 +47,8 @@
   var pendingCredentials = null;
   var lastSearchCountry = '';
   var lastSearchPlatform = '';
-  var lastSearchCommunityFallback = false;
-  var lastSearchCatalogFirst = false;
-  var lastSearchMergeCatalogs = false;
+  var currentAppName = '';
+  var versionsHeader = { count: 0, note: '' };
   var mergeCatalogs = false;
   var currentAppId = null;
   var currentBundleId = null;
@@ -490,7 +489,7 @@
         if (!button.getAttribute('data-label')) {
           button.setAttribute('data-label', button.textContent || button.innerText || '');
         }
-        button.textContent = 'Signing in\u2026 (can take up to a minute)';
+        button.textContent = 'Signing in... (can take up to a minute)';
         button.disabled = true;
       } else {
         if (button.getAttribute('data-label')) {
@@ -703,7 +702,7 @@
       var priceHtml = app && app.price && app.price > 0
         ? '<span>\uD83D\uDCB0 $' + esc(app.price) + '</span>'
         : '<span class="badge">Free</span>';
-      html.push('<div class="app-card" data-app-id="' + esc(app.trackId || '') + '" data-bundle-id="' + esc(app.bundleId || '') + '">' +
+      html.push('<div class="app-card" data-app-id="' + esc(app.trackId || '') + '" data-bundle-id="' + esc(app.bundleId || '') + '" data-app-name="' + esc(app.trackName || '') + '">' +
         '<h3 class="app-card-title">' + esc(app.trackName || 'Unknown') + '</h3>' +
         '<div class="app-card-meta"><span>\uD83D\uDCE6 ' + esc(app.bundleId || 'N/A') + '</span><span>\uD83C\uDFF7\uFE0F v' + esc(app.version || 'N/A') + '</span>' + priceHtml + '</div>' +
         '<div class="app-card-id"><span class="copy-code" data-copy="' + esc(app.trackId || '') + '" title="Click to copy App ID"><span class="copy-icon">\uD83C\uDD94</span> <span>' + esc(app.trackId || '') + '</span></span>' +
@@ -730,8 +729,11 @@
         }
         var appId = this.getAttribute('data-app-id');
         var bundleId = this.getAttribute('data-bundle-id');
-        mergeCatalogs = lastSearchMergeCatalogs;
-        loadAppVersions(appId, bundleId, null, lastSearchPlatform, lastSearchCommunityFallback, lastSearchCatalogFirst);
+        // The checkboxes as they are now, not as they were at search time.
+        var options = serializeForm(searchForm);
+        mergeCatalogs = options.mergeCatalogs === 'on';
+        currentAppName = this.getAttribute('data-app-name') || '';
+        loadAppVersions(appId, bundleId, null, lastSearchPlatform, options.communityFallback === 'on', options.catalogFirst === 'on');
         return false;
       };
     }
@@ -763,9 +765,6 @@
     if (lastSearchCountry) {
       params.push('country=' + encodeURIComponent(lastSearchCountry.toUpperCase()));
     }
-    lastSearchCommunityFallback = formData.communityFallback === 'on';
-    lastSearchCatalogFirst = formData.catalogFirst === 'on';
-    lastSearchMergeCatalogs = formData.mergeCatalogs === 'on';
 
     showToast('Searching...');
     sendRequest('GET', apiUrl('/api/search') + '?' + params.join('&'), null, function (response) {
@@ -897,7 +896,65 @@
         });
         return;
       }
-      loadAndRenderVersionMetadata(identifiers, latest, []);
+      loadAndRenderVersionMetadata(newestFirst(identifiers), latest, []);
+    });
+  }
+
+  // Version ids grow with each release: newest first, as in the private catalog.
+  function newestFirst(ids) {
+    var copy = ids.slice(0);
+    copy.sort(function (a, b) { return (Number(b) || 0) - (Number(a) || 0); });
+    return copy;
+  }
+
+  // "Name / bundle id | N versions | source", the same for every source; a
+  // name not known yet (Direct Lookup) is filled in from the App Store.
+  function setVersionsHeader(count, note) {
+    versionsHeader = { count: count, note: note || '' };
+    renderVersionsHeader();
+    if (!currentAppName) {
+      fillAppName();
+    }
+  }
+
+  function renderVersionsHeader() {
+    var parts = [currentBundleId || (currentAppId ? 'id' + currentAppId : ''),
+      versionsHeader.count + ' version' + (versionsHeader.count === 1 ? '' : 's'), versionsHeader.note];
+    var shown = [];
+    for (var i = 0; i < parts.length; i += 1) {
+      if (parts[i]) {
+        shown.push(parts[i]);
+      }
+    }
+    if (appTitle) {
+      appTitle.textContent = currentAppName || 'App Versions';
+    }
+    if (appSubtitle) {
+      appSubtitle.textContent = shown.join(' | ');
+    }
+  }
+
+  function fillAppName() {
+    var key = currentAppId + '|' + currentBundleId;
+    var params = [];
+    if (currentAppId) {
+      params.push('appId=' + encodeURIComponent(currentAppId));
+    }
+    if (currentBundleId) {
+      params.push('bundleId=' + encodeURIComponent(currentBundleId));
+    }
+    sendRequest('GET', apiUrl('/api/app-info') + '?' + params.join('&'), null, function (response) {
+      var body = response.body || {};
+      if (response.status < 200 || response.status >= 300 || key !== currentAppId + '|' + currentBundleId) {
+        return;
+      }
+      if (body.name) {
+        currentAppName = body.name;
+      }
+      if (body.bundleId && !currentBundleId) {
+        currentBundleId = body.bundleId;
+      }
+      renderVersionsHeader();
     });
   }
 
@@ -935,9 +992,7 @@
         all.push(id);
       }
     }
-    var ascending = identifiers.length < 2 || Number(identifiers[0]) <= Number(identifiers[identifiers.length - 1]);
-    all.sort(function (a, b) { return ascending ? Number(a) - Number(b) : Number(b) - Number(a); });
-    return all;
+    return newestFirst(all);
   }
 
   function annotateWithCatalogs(catalogById) {
@@ -994,15 +1049,15 @@
       }
 
       var first = versions[0] || {};
-      if (appTitle) {
-        appTitle.textContent = first.itemName || 'App Versions';
+      if (first.itemName) {
+        currentAppName = first.itemName;
       }
-      if (appSubtitle) {
-        var skipped = versionCount - versions.length - fromCatalogs.length;
-        appSubtitle.textContent = (first.bundleId || currentBundleId || currentAppId || 'Versions') + ' | ' + versions.length + ' version' + (versions.length === 1 ? '' : 's') +
-          (fromCatalogs.length ? ' | ' + fromCatalogs.length + ' more from catalogs' : '') +
-          (skipped > 0 ? ' | ' + skipped + ' not served by Apple (hidden)' : '');
+      if (first.bundleId) {
+        currentBundleId = first.bundleId;
       }
+      var skipped = versionCount - versions.length - fromCatalogs.length;
+      setVersionsHeader(versions.length, (fromCatalogs.length ? fromCatalogs.length + ' more from catalogs' : '') +
+        (fromCatalogs.length && skipped > 0 ? ' | ' : '') + (skipped > 0 ? skipped + ' not served by Apple (hidden)' : ''));
 
       if (versions.length) {
         renderVersionCards(versions, latest);
@@ -1107,6 +1162,14 @@
     return 'Unknown';
   }
 
+  // "App Store 2.2" next to a version whose Info.plist says otherwise (2.2.1).
+  function storeBadge(storeVersion, version) {
+    if (!storeVersion || String(storeVersion) === String(version || '')) {
+      return '';
+    }
+    return ' <span class="badge-store" title="The version as the App Store shows it">App Store ' + esc(storeVersion) + '</span>';
+  }
+
   function renderVersionCards(versions, latest) {
     var html = [];
     for (var i = 0; i < versions.length; i += 1) {
@@ -1118,7 +1181,7 @@
         fileSizeMB = (version.fileSize / (1024 * 1024)).toFixed(2) + ' MB';
       }
       var isLatest = latest && versionId === latest;
-      html.push('<div class="version-card' + (isLatest ? ' latest' : '') + '" data-version-id="' + esc(versionId) + '"><div class="version-header"><div class="version-basic"><div><strong>Version:</strong> ' + esc(version.displayVersion || 'N/A') + '</div><div><strong>Build:</strong> ' + esc(version.buildNumber || 'N/A') + '</div><div><strong>Size:</strong> ' + esc(fileSizeMB) + '</div><div><strong>Released:</strong> ' + esc(releaseDate) + '</div>' + (version.minimumOsVersion ? '<div title="Minimum OS version, from this version\'s Info.plist"><strong>Requires:</strong> ' + esc(version.minimumOsName || 'iOS') + ' ' + esc(version.minimumOsVersion) + '+</div>' : '') + '</div><span class="expand-icon">▼</span></div><div class="version-details"><dl><dt>Version ID:</dt><dd><span class="copy-code" data-copy="' + esc(versionId) + '" title="Click to copy Version ID">' + esc(versionId || 'N/A') + '</span></dd><dt>Bundle ID:</dt><dd>' + esc(version.bundleId || 'N/A') + '</dd><dt>Developer:</dt><dd>' + esc(version.artistName || 'N/A') + '</dd><dt>Genre:</dt><dd>' + esc(version.genre || 'N/A') + '</dd><dt>Age Rating:</dt><dd>' + esc(version.ageRating || 'N/A') + '</dd><dt>Copyright:</dt><dd>' + esc(version.copyright || 'N/A') + '</dd></dl><div class="version-actions"><button type="button" class="download-version-btn" data-version-id="' + esc(versionId) + '">Download IPA</button> <button type="button" class="save-server-btn secondary" data-version-id="' + esc(versionId) + '" title="Save directly on the machine running the server, skip the browser download entirely">💾 Save on server</button> <button type="button" class="install-ota-btn secondary" data-version-id="' + esc(versionId) + '" title="Install straight onto this iPhone/iPad over the network">\uD83D\uDCF2 Install on device</button></div></div></div>');
+      html.push('<div class="version-card' + (isLatest ? ' latest' : '') + '" data-version-id="' + esc(versionId) + '"><div class="version-header"><div class="version-basic"><div><strong>Version:</strong> ' + esc(version.displayVersion || 'N/A') + storeBadge(version.storeVersion, version.displayVersion) + '</div><div><strong>Build:</strong> ' + esc(version.buildNumber || 'N/A') + '</div><div><strong>Size:</strong> ' + esc(fileSizeMB) + '</div><div><strong>Released:</strong> ' + esc(releaseDate) + '</div>' + (version.minimumOsVersion ? '<div title="Minimum OS version, from this version\'s Info.plist"><strong>Requires:</strong> ' + esc(version.minimumOsName || 'iOS') + ' ' + esc(version.minimumOsVersion) + '+</div>' : '') + '</div><span class="expand-icon">▼</span></div><div class="version-details"><dl><dt>Version ID:</dt><dd><span class="copy-code" data-copy="' + esc(versionId) + '" title="Click to copy Version ID">' + esc(versionId || 'N/A') + '</span></dd><dt>Bundle ID:</dt><dd>' + esc(version.bundleId || 'N/A') + '</dd>' + (version.storeVersion ? '<dt>App Store:</dt><dd>' + esc(version.storeVersion) + '</dd>' : '') + '<dt>Developer:</dt><dd>' + esc(version.artistName || 'N/A') + '</dd><dt>Genre:</dt><dd>' + esc(version.genre || 'N/A') + '</dd><dt>Age Rating:</dt><dd>' + esc(version.ageRating || 'N/A') + '</dd><dt>Copyright:</dt><dd>' + esc(version.copyright || 'N/A') + '</dd></dl><div class="version-actions"><button type="button" class="download-version-btn" data-version-id="' + esc(versionId) + '">Download IPA</button> <button type="button" class="save-server-btn secondary" data-version-id="' + esc(versionId) + '" title="Save directly on the machine running the server, skip the browser download entirely">💾 Save on server</button> <button type="button" class="install-ota-btn secondary" data-version-id="' + esc(versionId) + '" title="Install straight onto this iPhone/iPad over the network">\uD83D\uDCF2 Install on device</button></div></div></div>');
     }
     versionsList.innerHTML = html.join('');
   }
@@ -1170,12 +1233,7 @@
       if (!currentBundleId && body.bundleId) {
         currentBundleId = body.bundleId;
       }
-      if (appTitle) {
-        appTitle.textContent = 'App Versions';
-      }
-      if (appSubtitle) {
-        appSubtitle.textContent = 'Private catalog \u2022 ' + entries.length + ' version' + (entries.length === 1 ? '' : 's');
-      }
+      setVersionsHeader(entries.length, 'private catalog');
       var updated = body.updatedAt ? ' (updated ' + esc(String(body.updatedAt).slice(0, 10)) + ')' : '';
       versionsList.innerHTML = '<div class="notice-info">\uD83D\uDCDA From the private catalog' + updated +
         ' - Apple wasn\'t asked, so versions released since then aren\'t here. ' +
@@ -1255,12 +1313,7 @@
         entries = rest;
       }
 
-      if (appTitle) {
-        appTitle.textContent = 'App Versions';
-      }
-      if (appSubtitle) {
-        appSubtitle.textContent = 'Community catalogs (' + (communitySource || 'timbrd') + ') \u2022 ' + entries.length + ' version' + (entries.length === 1 ? '' : 's');
-      }
+      setVersionsHeader(entries.length, 'community catalogs (' + (communitySource || 'timbrd') + ')');
       renderCommunityVersions(entries, false);
       if (arcadeNotice) {
         var title = '\uD83D\uDD79\uFE0F Apple Arcade.';
@@ -1297,7 +1350,7 @@
         }
       }
       var vid = entry.externalVersionId || '';
-      html.push('<div class="version-card" data-version-id="' + esc(vid) + '"><div class="version-header"><div class="version-basic"><div><strong>Version:</strong> ' + esc(entry.bundleVersion || 'unknown') + (entry.current ? ' <span class="badge-current">current version</span>' : '') + (entry.appleRefused ? ' <span class="badge-unknown" title="Apple didn\'t describe this version for this account - it may still download">not described by Apple</span>' : '') + (entry.status === 'lost' ? ' <span class="badge-lost">lost</span>' : (entry.status === 'unknown' ? ' <span class="badge-unknown">unknown</span>' : '')) + '</div><div><strong>Build:</strong> ' + esc(entry.build || 'N/A') + '</div><div><strong>Size:</strong> ' + esc(sizeText) + '</div><div><strong>' + (fromCatalog ? 'Released' : 'Seen') + ':</strong> ' + esc(dateText) + '</div>' + (entry.minimumOs ? '<div><strong>Requires:</strong> iOS ' + esc(entry.minimumOs) + '+</div>' : '') + '</div><span class="expand-icon">\u25BC</span></div><div class="version-details"><dl><dt>Version ID:</dt><dd><span class="copy-code" data-copy="' + esc(vid) + '" title="Click to copy Version ID">' + esc(vid) + '</span></dd><dt>Bundle ID:</dt><dd>' + esc(bundleIdText) + '</dd>' + catalogDetails + (entry.status === 'lost' ? '<dt>Catalog:</dt><dd>Apple refused this version to the catalog\'s account' + (entry.checkedAt ? ' (checked ' + esc(String(entry.checkedAt).slice(0, 10)) + ')' : '') + ' - Apple\'s answer can change, so it may still download.</dd>' : '') + (entry.alsoIn && entry.alsoIn.length ? '<dt>Also listed in:</dt><dd>' + esc(entry.alsoIn.join(', ')) + '</dd>' : '') + '<dt>Source:</dt><dd>' + (entry.current ? 'Apple (current version)' : (entry.source === 'catalog' ? 'Private catalog' : entry.source === 'catalog-external' ? 'External catalog' : 'Community catalog (' + esc(entry.source || 'timbrd') + ') - not run or endorsed by Apple')) + '</dd></dl>' + (readOnly && !entry.current ? '' : '<div class="version-actions"><button type="button" class="download-version-btn" data-version-id="' + esc(vid) + '">Download IPA</button> <button type="button" class="save-server-btn secondary" data-version-id="' + esc(vid) + '" title="Save directly on the machine running the server, skip the browser download entirely">\uD83D\uDCBE Save on server</button> <button type="button" class="install-ota-btn secondary" data-version-id="' + esc(vid) + '" title="Install straight onto this iPhone/iPad over the network">\uD83D\uDCF2 Install on device</button></div>') + '</div></div>');
+      html.push('<div class="version-card" data-version-id="' + esc(vid) + '"><div class="version-header"><div class="version-basic"><div><strong>Version:</strong> ' + esc(entry.bundleVersion || 'unknown') + storeBadge(entry.storeVersion, entry.bundleVersion) + (entry.current ? ' <span class="badge-current">current version</span>' : '') + (entry.appleRefused ? ' <span class="badge-unknown" title="Apple didn\'t describe this version for this account - it may still download">not described by Apple</span>' : '') + (entry.status === 'lost' ? ' <span class="badge-lost">lost</span>' : (entry.status === 'unknown' ? ' <span class="badge-unknown">unknown</span>' : '')) + '</div><div><strong>Build:</strong> ' + esc(entry.build || 'N/A') + '</div><div><strong>Size:</strong> ' + esc(sizeText) + '</div><div><strong>' + (fromCatalog ? 'Released' : 'Seen') + ':</strong> ' + esc(dateText) + '</div>' + (entry.minimumOs ? '<div><strong>Requires:</strong> iOS ' + esc(entry.minimumOs) + '+</div>' : '') + '</div><span class="expand-icon">\u25BC</span></div><div class="version-details"><dl><dt>Version ID:</dt><dd><span class="copy-code" data-copy="' + esc(vid) + '" title="Click to copy Version ID">' + esc(vid) + '</span></dd><dt>Bundle ID:</dt><dd>' + esc(bundleIdText) + '</dd>' + (entry.storeVersion ? '<dt>App Store:</dt><dd>' + esc(entry.storeVersion) + '</dd>' : '') + catalogDetails + (entry.status === 'lost' ? '<dt>Catalog:</dt><dd>Apple refused this version to the catalog\'s account' + (entry.checkedAt ? ' (checked ' + esc(String(entry.checkedAt).slice(0, 10)) + ')' : '') + ' - Apple\'s answer can change, so it may still download.</dd>' : '') + (entry.alsoIn && entry.alsoIn.length ? '<dt>Also listed in:</dt><dd>' + esc(entry.alsoIn.join(', ')) + '</dd>' : '') + '<dt>Source:</dt><dd>' + (entry.current ? 'Apple (current version)' : (entry.source === 'catalog' ? 'Private catalog' : entry.source === 'catalog-external' ? 'External catalog' : 'Community catalog (' + esc(entry.source || 'timbrd') + ') - not run or endorsed by Apple')) + '</dd></dl>' + (readOnly && !entry.current ? '' : '<div class="version-actions"><button type="button" class="download-version-btn" data-version-id="' + esc(vid) + '">Download IPA</button> <button type="button" class="save-server-btn secondary" data-version-id="' + esc(vid) + '" title="Save directly on the machine running the server, skip the browser download entirely">\uD83D\uDCBE Save on server</button> <button type="button" class="install-ota-btn secondary" data-version-id="' + esc(vid) + '" title="Install straight onto this iPhone/iPad over the network">\uD83D\uDCF2 Install on device</button></div>') + '</div></div>');
     }
     return html.join('');
   }
@@ -1663,6 +1716,7 @@
     }
 
     mergeCatalogs = formData.mergeCatalogs === 'on';
+    currentAppName = '';
     loadAppVersions(formData.appId, formData.bundleId, formData.externalVersionId, formData.platform, formData.communityFallback === 'on', formData.catalogFirst === 'on');
     return false;
   }

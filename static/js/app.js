@@ -5,6 +5,12 @@ function esc(value) {
   }[c]));
 }
 
+// "App Store 2.2" next to a version whose Info.plist says otherwise (2.2.1).
+function storeBadge(storeVersion, version) {
+  if (!storeVersion || String(storeVersion) === String(version || '')) return '';
+  return ` <span class="badge-store" title="The version as the App Store shows it">App Store ${esc(storeVersion)}</span>`;
+}
+
 // Run async tasks with at most `limit` in flight. Loading metadata for every
 // version at once used to fire hundreds of simultaneous requests at Apple.
 async function mapLimit(items, limit, fn, onProgress) {
@@ -469,7 +475,7 @@ class IPAToolUI {
     buttons.forEach((button) => {
       if (busy) {
         if (!button.dataset.label) button.dataset.label = button.textContent;
-        button.textContent = 'Signing in\u2026 (can take up to a minute)';
+        button.textContent = 'Signing in... (can take up to a minute)';
         button.disabled = true;
       } else {
         if (button.dataset.label) button.textContent = button.dataset.label;
@@ -542,9 +548,6 @@ class IPAToolUI {
     if (formData.country) params.set('country', formData.country);
     this.lastSearchCountry = (formData.country || '').toLowerCase();
     this.lastSearchPlatform = formData.platform || '';
-    this.lastSearchCommunityFallback = !!formData.communityFallback;
-    this.lastSearchCatalogFirst = !!formData.catalogFirst;
-    this.lastSearchMergeCatalogs = !!formData.mergeCatalogs;
 
     try {
       const response = await this.request(`${this.apiUrl('/api/search')}?${params.toString()}`);
@@ -568,7 +571,7 @@ class IPAToolUI {
     }
 
     this.searchResults.innerHTML = results.map(app => `
-      <div class="app-card" data-app-id="${esc(app.trackId)}" data-bundle-id="${esc(app.bundleId)}">
+      <div class="app-card" data-app-id="${esc(app.trackId)}" data-bundle-id="${esc(app.bundleId)}" data-app-name="${esc(app.trackName || '')}">
         <div class="app-card-header">
           <div>
             <h3 class="app-card-title">${esc(app.trackName || 'Unknown')}</h3>
@@ -597,9 +600,12 @@ class IPAToolUI {
         
         const appId = card.dataset.appId;
         const bundleId = card.dataset.bundleId;
-        this.mergeCatalogs = !!this.lastSearchMergeCatalogs;
-        this.loadAppVersions(appId, bundleId, null, this.lastSearchPlatform, this.lastSearchCommunityFallback,
-          this.lastSearchCatalogFirst);
+        // The checkboxes as they are now, not as they were at search time.
+        const options = this.serializeForm(this.searchForm);
+        this.mergeCatalogs = !!options.mergeCatalogs;
+        this.currentAppName = card.dataset.appName || '';
+        this.loadAppVersions(appId, bundleId, null, this.lastSearchPlatform, !!options.communityFallback,
+          !!options.catalogFirst);
       });
     });
 
@@ -625,6 +631,7 @@ class IPAToolUI {
       return;
     }
     this.mergeCatalogs = !!formData.mergeCatalogs;
+    this.currentAppName = '';
     this.loadAppVersions(formData.appId, formData.bundleId, formData.externalVersionId, formData.platform,
       !!formData.communityFallback, !!formData.catalogFirst);
   }
@@ -700,6 +707,38 @@ class IPAToolUI {
     }
   }
 
+  // "Name / bundle id | N versions | source", the same for every source; a
+  // name not known yet (Direct Lookup) is filled in from the App Store.
+  setVersionsHeader(count, note = '') {
+    this.versionsHeader = { count, note };
+    this.renderVersionsHeader();
+    if (!this.currentAppName) this.fillAppName();
+  }
+
+  renderVersionsHeader() {
+    const { count, note } = this.versionsHeader || { count: 0, note: '' };
+    this.appTitle.textContent = this.currentAppName || 'App Versions';
+    this.appSubtitle.textContent = [this.currentBundleId || (this.currentAppId ? `id${this.currentAppId}` : ''),
+      `${count} version${count === 1 ? '' : 's'}`, note].filter(Boolean).join(' | ');
+  }
+
+  async fillAppName() {
+    const key = `${this.currentAppId}|${this.currentBundleId}`;
+    const params = new URLSearchParams();
+    if (this.currentAppId) params.set('appId', this.currentAppId);
+    if (this.currentBundleId) params.set('bundleId', this.currentBundleId);
+    try {
+      const response = await this.request(`${this.apiUrl('/api/app-info')}?${params.toString()}`);
+      const data = await response.json();
+      if (!response.ok || key !== `${this.currentAppId}|${this.currentBundleId}`) return;
+      if (data.name) this.currentAppName = data.name;
+      if (data.bundleId && !this.currentBundleId) this.currentBundleId = data.bundleId;
+      this.renderVersionsHeader();
+    } catch (error) {
+      // the header keeps the id
+    }
+  }
+
   async loadAppVersionsFromCatalog(appId, bundleId, externalVersionId, platform, communityFallback) {
     const params = new URLSearchParams();
     if (appId) params.set('appId', appId);
@@ -723,8 +762,7 @@ class IPAToolUI {
       return false;
     }
     if (!this.currentBundleId && data.bundleId) this.currentBundleId = data.bundleId;
-    this.appTitle.textContent = 'App Versions';
-    this.appSubtitle.textContent = `Private catalog | ${entries.length} version${entries.length === 1 ? '' : 's'}`;
+    this.setVersionsHeader(entries.length, 'private catalog');
     this.renderCommunityVersions(entries, false);
     const updated = data.updatedAt ? ` (updated ${esc(String(data.updatedAt).slice(0, 10))})` : '';
     this.versionsList.insertAdjacentHTML('afterbegin',
@@ -769,8 +807,7 @@ class IPAToolUI {
         entries.unshift(Object.assign({}, current || { externalVersionId: currentVersionId, bundleVersion: 'current' }, { current: true }));
       }
 
-      this.appTitle.textContent = 'App Versions';
-      this.appSubtitle.textContent = `Community catalogs (${communitySource || 'timbrd'}) | ${entries.length} version${entries.length === 1 ? '' : 's'}`;
+      this.setVersionsHeader(entries.length, `community catalogs (${communitySource || 'timbrd'})`);
       this.renderCommunityVersions(entries, false);
       if (arcadeNotice) {
         const title = '🕹️ Apple Arcade.';
@@ -803,7 +840,7 @@ class IPAToolUI {
         <div class="version-card" data-version-id="${esc(entry.externalVersionId)}">
           <div class="version-header">
             <div class="version-basic">
-              <div><strong>Version:</strong> ${esc(entry.bundleVersion || 'unknown')}${entry.current ? ' <span class="badge-current">current version</span>' : ''}${entry.appleRefused ? ' <span class="badge-unknown" title="Apple didn\'t describe this version for this account - it may still download">not described by Apple</span>' : ''}${entry.status === 'lost' ? ' <span class="badge-lost" title="Apple refused this version to the catalog\'s account - it may still download">lost</span>' : (entry.status === 'unknown' ? ' <span class="badge-unknown">unknown</span>' : '')}</div>
+              <div><strong>Version:</strong> ${esc(entry.bundleVersion || 'unknown')}${storeBadge(entry.storeVersion, entry.bundleVersion)}${entry.current ? ' <span class="badge-current">current version</span>' : ''}${entry.appleRefused ? ' <span class="badge-unknown" title="Apple didn\'t describe this version for this account - it may still download">not described by Apple</span>' : ''}${entry.status === 'lost' ? ' <span class="badge-lost" title="Apple refused this version to the catalog\'s account - it may still download">lost</span>' : (entry.status === 'unknown' ? ' <span class="badge-unknown">unknown</span>' : '')}</div>
               <div><strong>Build:</strong> ${esc(entry.build || 'N/A')}</div>
               <div><strong>Size:</strong> ${esc(sizeText)}</div>
               <div><strong>${fromCatalog ? 'Released' : 'Seen'}:</strong> ${esc(dateText)}</div>
@@ -820,6 +857,7 @@ class IPAToolUI {
                 </span>
               </dd>
               <dt>Bundle ID:</dt><dd>${esc(bundleIdText)}</dd>
+              ${entry.storeVersion ? `<dt>App Store:</dt><dd>${esc(entry.storeVersion)}</dd>` : ''}
               ${catalogDetails}
               ${entry.status === 'lost' ? `<dt>Catalog:</dt><dd>Apple refused this version to the catalog's account${entry.checkedAt ? ` (checked ${esc(String(entry.checkedAt).slice(0, 10))})` : ''} - Apple's answer can change, so it may still download.</dd>` : ''}
               ${(entry.alsoIn || []).length ? `<dt>Also listed in:</dt><dd>${esc(entry.alsoIn.join(', '))}</dd>` : ''}
@@ -911,13 +949,10 @@ class IPAToolUI {
     // With "merge catalogs": versions only the catalogs know are asked about
     // too, and versions Apple doesn't describe stay listed (from the catalogs).
     const catalogById = new Map(catalogEntries.map(e => [String(e.externalVersionId), e]));
-    if (catalogEntries.length) {
-      const ascending = versionIds.length < 2 || Number(versionIds[0]) <= Number(versionIds[versionIds.length - 1]);
-      const all = Array.from(new Set([...versionIds.map(String), ...catalogById.keys()]))
-        .filter(id => /^\d+$/.test(id))
-        .sort((a, b) => (ascending ? Number(a) - Number(b) : Number(b) - Number(a)));
-      versionIds = all;
-    }
+    // Newest first, as in the private catalog: version ids grow with each release.
+    versionIds = Array.from(new Set([...versionIds.map(String), ...catalogById.keys()]))
+      .filter(id => /^\d+$/.test(id))
+      .sort((a, b) => Number(b) - Number(a));
     if (versionIds.length === 0) {
       this.versionsList.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📦</div><p>No versions found</p></div>';
       this.versionsSection.hidden = true;
@@ -952,11 +987,12 @@ class IPAToolUI {
       .map(entry => ({ ...entry, appleRefused: true }));
 
     if (versions.length > 0 || fromCatalogs.length > 0) {
-      this.appTitle.textContent = (versions[0] && versions[0].itemName) || 'App Versions';
+      const described = versions.find(v => v.itemName) || {};
+      if (described.itemName) this.currentAppName = described.itemName;
+      if (described.bundleId) this.currentBundleId = described.bundleId;
       const skipped = versionIds.length - versions.length - fromCatalogs.length;
-      this.appSubtitle.textContent = `${(versions[0] && versions[0].bundleId) || this.currentBundleId} | ${versions.length} version${versions.length === 1 ? '' : 's'}`
-        + (fromCatalogs.length ? ` | ${fromCatalogs.length} more from catalogs` : '')
-        + (skipped > 0 ? ` | ${skipped} not served by Apple (hidden)` : '');
+      this.setVersionsHeader(versions.length, [fromCatalogs.length ? `${fromCatalogs.length} more from catalogs` : '',
+        skipped > 0 ? `${skipped} not served by Apple (hidden)` : ''].filter(Boolean).join(' | '));
       this.renderVersionCards(versions);
       this.annotateWithCatalogs(versions);
       if (fromCatalogs.length) {
@@ -1012,7 +1048,7 @@ class IPAToolUI {
         <div class="version-card" data-version-id="${esc(version.versionId)}" data-index="${index}">
           <div class="version-header">
             <div class="version-basic">
-              <div><strong>Version:</strong> ${esc(version.displayVersion)}</div>
+              <div><strong>Version:</strong> ${esc(version.displayVersion)}${storeBadge(version.storeVersion, version.displayVersion)}</div>
               <div><strong>Build:</strong> ${esc(version.buildNumber)}</div>
               <div><strong>Size:</strong> ${esc(fileSizeMB)} MB</div>
               <div><strong>Released:</strong> ${esc(releaseDate)}</div>
@@ -1029,6 +1065,7 @@ class IPAToolUI {
                 </span>
               </dd>
               <dt>Bundle ID:</dt><dd>${esc(version.bundleId)}</dd>
+              ${version.storeVersion ? `<dt>App Store:</dt><dd>${esc(version.storeVersion)}</dd>` : ''}
               <dt>Developer:</dt><dd>${esc(version.artistName)}</dd>
               <dt>Genre:</dt><dd>${esc(version.genre)}</dd>
               <dt>Age Rating:</dt><dd>${esc(version.ageRating)}</dd>
