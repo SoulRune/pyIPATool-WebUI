@@ -144,6 +144,79 @@ class _PureAES:
         return out
 
 
+    def decrypt_block(self, block: bytes) -> bytes:
+        """The inverse cipher (FIPS-197 5.3), byte-oriented: only the small
+        IOAES buffers of the machine-verification emulation use it."""
+        rounds = self._rounds
+        k = self._keys
+
+        def add_round_key(state, r):
+            for c in range(4):
+                word = k[4 * r + c]
+                for row in range(4):
+                    state[4 * c + row] ^= (word >> (24 - 8 * row)) & 0xFF
+
+        state = list(block)
+        add_round_key(state, rounds)
+        for r in range(rounds - 1, -1, -1):
+            # InvShiftRows then InvSubBytes
+            shifted = [0] * 16
+            for c in range(4):
+                for row in range(4):
+                    shifted[4 * ((c + row) % 4) + row] = state[4 * c + row]
+            state = [_INV_SBOX[v] for v in shifted]
+            add_round_key(state, r)
+            if r:
+                for c in range(4):
+                    a = state[4 * c:4 * c + 4]
+                    state[4 * c + 0] = _mul(a[0], 14) ^ _mul(a[1], 11) ^ _mul(a[2], 13) ^ _mul(a[3], 9)
+                    state[4 * c + 1] = _mul(a[0], 9) ^ _mul(a[1], 14) ^ _mul(a[2], 11) ^ _mul(a[3], 13)
+                    state[4 * c + 2] = _mul(a[0], 13) ^ _mul(a[1], 9) ^ _mul(a[2], 14) ^ _mul(a[3], 11)
+                    state[4 * c + 3] = _mul(a[0], 11) ^ _mul(a[1], 13) ^ _mul(a[2], 9) ^ _mul(a[3], 14)
+        return bytes(state)
+
+
+_INV_SBOX = [0] * 256
+for _index, _value in enumerate(_SBOX):
+    _INV_SBOX[_value] = _index
+
+
+def _mul(value: int, factor: int) -> int:
+    result = 0
+    while factor:
+        if factor & 1:
+            result ^= value
+        value = ((value << 1) ^ 0x11B) if value & 0x80 else value << 1
+        factor >>= 1
+    return result
+
+
+def aes_cbc_encrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
+    """AES-CBC without padding (``data`` is a whole number of blocks)."""
+    if len(data) % 16 or len(iv) != 16:
+        raise CryptoError("AES-CBC needs whole blocks and a 16-byte IV")
+    aes = _PureAES(key)
+    out = bytearray()
+    previous = iv
+    for i in range(0, len(data), 16):
+        previous = aes.encrypt_block(bytes(a ^ b for a, b in zip(data[i:i + 16], previous)))
+        out += previous
+    return bytes(out)
+
+
+def aes_cbc_decrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
+    if len(data) % 16 or len(iv) != 16:
+        raise CryptoError("AES-CBC needs whole blocks and a 16-byte IV")
+    aes = _PureAES(key)
+    out = bytearray()
+    previous = iv
+    for i in range(0, len(data), 16):
+        block = data[i:i + 16]
+        out += bytes(a ^ b for a, b in zip(aes.decrypt_block(block), previous))
+        previous = block
+    return bytes(out)
+
+
 def _counter_blocks(iv: bytes, count: int) -> bytes:
     start = int.from_bytes(iv, "big")
     mask = (1 << 128) - 1

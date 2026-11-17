@@ -22,6 +22,18 @@ LOOPBACK_NAMES = {"localhost", "127.0.0.1", "::1"}
 logger = logging.getLogger("ipatool")
 
 
+class _VersionAction(argparse.Action):
+    """--version: imports the package only when asked."""
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
+        super().__init__(option_strings, dest=dest, default=default, nargs=0, help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        from ipatool_api.version import __version__
+
+        parser.exit(message=f"pyIPATool WebUI v{__version__}\n")
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="pyIPATool WebUI")
     parser.add_argument(
@@ -33,6 +45,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=5002, help="Port to listen on (default: 5002)")
     parser.add_argument("--host", default="127.0.0.1", help="Host/interface to bind to (default: 127.0.0.1)")
     parser.add_argument("--debug", action="store_true", help="Flask debug mode + verbose (redacted) logging")
+    parser.add_argument("--version", action=_VersionAction, help="Show the version and exit")
 
     sessions = parser.add_argument_group("sessions & security")
     sessions.add_argument(
@@ -83,7 +96,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     sessions.add_argument(
         "--user-agent",
-        help="User-Agent sent to Apple (default: the Apple Configurator 2.17 string ipatool uses). "
+        help="User-Agent sent to Apple (default: the Apple Configurator 2.21 string ipatool 2.8 uses for Store requests). "
         "Apple ties the sign-in to it: after changing it, sign out and in again.",
     )
     sessions.add_argument("--cert", help="TLS certificate (PEM) - serve HTTPS directly")
@@ -698,6 +711,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         daemonize(stdout_log_path(args.log_file), args.pid_file)
 
     setup_logging(args.log_file, args.log_level or ("DEBUG" if args.debug else "INFO"))
+    from ipatool_api.version import __version__
+
+    logger.info("pyIPATool WebUI v%s", __version__)
     from ipatool_api.services import vault
 
     if vault.is_unlocked():

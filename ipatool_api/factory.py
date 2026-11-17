@@ -11,6 +11,7 @@ from typing import Iterable, Optional
 from flask import Flask, g, request
 
 from .routes.api import api_bp
+from .version import __version__
 from .routes.ota import ota_bp
 from .routes.ui import ui_bp
 from .services import (
@@ -191,7 +192,7 @@ def create_app(
 
     @app.context_processor
     def _inject_csp_nonce():
-        return {"csp_nonce": g.get("csp_nonce", ""), "repo_url": app.config["REPO_URL"]}
+        return {"csp_nonce": g.get("csp_nonce", ""), "repo_url": app.config["REPO_URL"], "app_version": __version__}
 
     @app.after_request
     def _security_headers(response):

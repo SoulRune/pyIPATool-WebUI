@@ -51,7 +51,8 @@ def _catalog_available() -> bool:
 _SOURCE_SKIP_DIRS = {"__pycache__", ".git", ".venv", "venv", "env", "node_modules", "unicorn"}
 _SOURCE_SUFFIXES = (".py", ".html", ".js", ".css", ".md", ".txt", ".plist", ".toml", ".cfg", ".ini", ".sh",
                     ".bat", ".ps1", ".svg", ".png", ".ico", ".conf", ".service")
-_SOURCE_NAMES = {"LICENSE", "NOTICE", "COPYING", "Makefile", "Dockerfile", "Caddyfile"}
+_SOURCE_NAMES = {"LICENSE", "NOTICE", "COPYING", "Makefile", "Dockerfile", "Caddyfile",
+                 "store_profile.bin"}  # data the Store runtime needs (see NOTICE)
 _SOURCE_SECRET_HINTS = ("password", "secret", "token", "credential", "private")
 
 

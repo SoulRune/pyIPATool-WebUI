@@ -201,6 +201,36 @@ def _enough_free_space(directory: Path) -> bool:
         return True  # can't tell - don't block downloads over it
 
 
+def _download_refused(target_dir: Path):
+    """The checks every download passes before it starts: active downloads per
+    session and overall, and free disk space. A response to return, or None."""
+    mine, total = download_jobs.active_counts(_owner())
+    if mine >= MAX_ACTIVE_PER_OWNER or total >= MAX_ACTIVE_TOTAL:
+        return (
+            jsonify({"error": "too many downloads in progress - wait for one to finish"}),
+            HTTPStatus.TOO_MANY_REQUESTS,
+        )
+    if not _enough_free_space(target_dir):
+        logger.warning("refusing download: less than %d MB free on %s", jobs_module.MIN_FREE_BYTES // 2**20, target_dir)
+        return jsonify({"error": "not enough free disk space on the server"}), HTTPStatus.INSUFFICIENT_STORAGE
+    return None
+
+
+def _run_blocking_download(job_id: str, run: Callable[[], Any]) -> Any:
+    """A download done inside the request: counted as an active job and run in
+    a download slot like the background ones; marked failed on any error."""
+    try:
+        with download_jobs.slots:
+            download_jobs.update(job_id, status="downloading")
+            return run()
+    except BaseException as exc:
+        download_jobs.update(job_id, status="error", error=redact_text(str(exc)))
+        raise
+
+
+_JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
 def _parse_int(value: Any, name: str, default: int, minimum: int, maximum: int) -> int:
     if value in (None, ""):
         return default
@@ -536,6 +566,13 @@ def list_versions_private_catalog():
                     "entries": [entry.to_dict() for entry in entries]})
 
 
+# Clearing is shared by everyone: at most once a minute, so it can't be used
+# to make the server ask Apple for everything again and again.
+_CACHE_CLEAR_INTERVAL = 60.0
+_cache_cleared_at = -_CACHE_CLEAR_INTERVAL
+_cache_clear_lock = threading.Lock()
+
+
 @api_bp.post("/cache/clear")
 def clear_cache():
     """Forget cached version data (catalogs, community lists, release dates,
@@ -543,6 +580,13 @@ def clear_cache():
     costs a few extra requests afterwards."""
     from ..services.appstore import clear_version_caches
 
+    global _cache_cleared_at
+    with _cache_clear_lock:
+        wait = _CACHE_CLEAR_INTERVAL - (time.monotonic() - _cache_cleared_at)
+        if wait > 0:
+            return jsonify({"error": f"the cache was just cleared - try again in {int(wait) + 1} s"}), \
+                HTTPStatus.TOO_MANY_REQUESTS
+        _cache_cleared_at = time.monotonic()
     count = clear_version_caches()
     logger.info("version caches cleared (%d entries)", count)
     return jsonify({"cleared": count})
@@ -580,12 +624,23 @@ def download():
     account = service.account_info()
     app = _resolve_supported_app(payload, account)
     external_version_id = _resolve_external_version_id(account, app, platform, payload.get("externalVersionId"))
+    refused = _download_refused(_server_download_dir())
+    if refused is not None:
+        return refused
 
-    result, _ = _download_with_retries(
-        service, account, app, _server_download_dir(), external_version_id, bool(payload.get("purchaseIfNeeded")),
-        platform=platform,
-    )
-    service.validate_package_platform(result.destination_path, package_platform)
+    job = download_jobs.create(owner=_owner())
+
+    def run():
+        result, _ = _download_with_retries(
+            service, account, app, _server_download_dir(), external_version_id, bool(payload.get("purchaseIfNeeded")),
+            platform=platform,
+        )
+        service.validate_package_platform(result.destination_path, package_platform)
+        return result
+
+    result = _run_blocking_download(job.id, run)
+    download_jobs.update(job.id, status="ready", saved_to_server=True, server_path=result.destination_path,
+                         filename=Path(result.destination_path).name)
     return jsonify({"destinationPath": result.destination_path, "sinfCount": len(result.sinfs)})
 
 
@@ -601,14 +656,23 @@ def download_stream():
     app = _resolve_supported_app(payload, account)
     external_version_id = _resolve_external_version_id(account, app, platform, payload.get("externalVersionId"))
 
+    refused = _download_refused(_temp_download_dir())
+    if refused is not None:
+        return refused
+
     job = download_jobs.create(owner=_owner())
     work_dir = _temp_download_dir() / job.id
     download_jobs.update(job.id, work_dir=str(work_dir))
-    result, _ = _download_with_retries(
-        service, account, app, work_dir, external_version_id, bool(payload.get("purchaseIfNeeded")),
-        platform=platform,
-    )
-    service.validate_package_platform(result.destination_path, package_platform)
+
+    def run():
+        result, _ = _download_with_retries(
+            service, account, app, work_dir, external_version_id, bool(payload.get("purchaseIfNeeded")),
+            platform=platform,
+        )
+        service.validate_package_platform(result.destination_path, package_platform)
+        return result
+
+    result = _run_blocking_download(job.id, run)
     file_path = Path(result.destination_path)
     # Registered as a finished job so the regular TTL sweep removes it.
     download_jobs.update(job.id, status="ready", filename=file_path.name, file_path=str(file_path))
@@ -631,16 +695,9 @@ def start_download_job():
     if save_to_server_folder and not _server_save_allowed():
         return jsonify({"error": "saving on the server is disabled"}), HTTPStatus.FORBIDDEN
 
-    mine, total = download_jobs.active_counts(_owner())
-    if mine >= MAX_ACTIVE_PER_OWNER or total >= MAX_ACTIVE_TOTAL:
-        return (
-            jsonify({"error": "too many downloads in progress - wait for one to finish"}),
-            HTTPStatus.TOO_MANY_REQUESTS,
-        )
-    target_dir = _server_download_dir() if save_to_server_folder else _temp_download_dir()
-    if not _enough_free_space(target_dir):
-        logger.warning("refusing download: less than %d MB free on %s", jobs_module.MIN_FREE_BYTES // 2**20, target_dir)
-        return jsonify({"error": "not enough free disk space on the server"}), HTTPStatus.INSUFFICIENT_STORAGE
+    refused = _download_refused(_server_download_dir() if save_to_server_folder else _temp_download_dir())
+    if refused is not None:
+        return refused
 
     job = download_jobs.create(owner=_owner())
     if save_to_server_folder:
@@ -692,7 +749,7 @@ def start_download_job():
 
 @api_bp.get("/download-jobs/<job_id>")
 def poll_download_job(job_id: str):
-    job = download_jobs.get(job_id, owner=_owner())
+    job = download_jobs.get(job_id, owner=_owner()) if _JOB_ID_RE.match(job_id) else None
     if job is None:
         return jsonify({"error": "job not found"}), HTTPStatus.NOT_FOUND
     data = job.to_dict()
@@ -710,6 +767,8 @@ def poll_download_job(job_id: str):
 
 @api_bp.get("/download-jobs/<job_id>/file")
 def fetch_download_job_file(job_id: str):
+    if not _JOB_ID_RE.match(job_id):
+        return jsonify({"error": "file not ready"}), HTTPStatus.NOT_FOUND
     job = download_jobs.get(job_id, owner=_owner())
     if job is None or job.status != "ready" or not job.file_path:
         logger.warning(

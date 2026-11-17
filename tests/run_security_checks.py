@@ -48,7 +48,11 @@ r = c.post("/access", data={"password": "correct horse battery", "next": "//evil
 assert r.status_code == 302 and r.headers["Location"].endswith("/") and "evil" not in r.headers["Location"], r.headers
 cookie = r.headers["Set-Cookie"]
 assert "ipatool_access=" in cookie and "HttpOnly" in cookie and "Secure" in cookie and "SameSite=Lax" in cookie
-assert c.get("/", headers=headers("198.51.100.2")).status_code == 200
+page = c.get("/", headers=headers("198.51.100.2"))
+assert page.status_code == 200
+from ipatool_api.version import __version__  # noqa: E402
+
+assert __version__ != "unknown" and f"v{__version__}".encode() in page.data, "version in the footer"
 assert c.get("/api/account", headers=headers("198.51.100.2")).status_code == 200
 # a forged cookie doesn't pass
 c2 = app.test_client()
@@ -91,4 +95,42 @@ with app.test_request_context("/", environ_base={"REMOTE_ADDR": "2001:db8:1:2:bb
     assert access.client_ip() == first == "2001:db8:1:2::/64"
 with app.test_request_context("/", environ_base={"REMOTE_ADDR": "::ffff:198.51.100.9"}):
     assert access.client_ip() == "198.51.100.9"
+# no open redirect through a backslash ("/\\host" is "//host" to browsers) or control characters
+for target in ("/\\evil.example/x", "/\t/evil.example", "/%0d%0aSet-Cookie:x"):
+    r = c.post("/access", data={"password": "correct horse battery", "next": target}, headers=headers("198.51.100.5"))
+    location = r.headers["Location"]
+    assert r.status_code == 302 and "evil" not in location and "\\" not in location, (target, location)
+assert c.post("/access", data={"password": "correct horse battery", "next": "/versions?a=1"},
+              headers=headers("198.51.100.5")).headers["Location"].endswith("/versions?a=1")
+
+# download job ids: only real ids are looked up
+for bad in ("..", "x" * 40, "0123456789abcdef0123456789ABCDEF"):
+    assert c.get(f"/api/download-jobs/{bad}", headers=headers("198.51.100.2")).status_code == 404
+    assert c.get(f"/api/download-jobs/{bad}/file", headers=headers("198.51.100.2")).status_code == 404
+
+# clearing the shared caches: at most once a minute
+from ipatool_api.routes import api as api_routes  # noqa: E402
+
+api_routes._cache_cleared_at = -api_routes._CACHE_CLEAR_INTERVAL
+assert c.post("/api/cache/clear", json={}, headers=J).status_code == 200
+assert c.post("/api/cache/clear", json={}, headers=J).status_code == 429
+
+# blocking downloads pass the same limits as background ones
+from ipatool_api.services.jobs import MAX_ACTIVE_PER_OWNER, download_jobs  # noqa: E402
+
+api_routes._owner = lambda: "owner-1"
+with app.test_request_context("/"):
+    owner = api_routes._owner()
+    held = [download_jobs.create(owner=owner) for _ in range(MAX_ACTIVE_PER_OWNER)]
+    refused = api_routes._download_refused(Path(HOME))
+    assert refused is not None and refused[1] == 429, refused
+    for job in held:
+        download_jobs.update(job.id, status="error")
+    assert api_routes._download_refused(Path(HOME)) is None
+    job = download_jobs.create(owner=owner)
+    try:
+        api_routes._run_blocking_download(job.id, lambda: (_ for _ in ()).throw(AppStoreError("boom")))
+    except AppStoreError:
+        pass
+    assert download_jobs.get(job.id).status == "error", "a failed blocking download doesn't stay active"
 print("SECURITY OK")

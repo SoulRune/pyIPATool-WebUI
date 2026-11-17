@@ -5,9 +5,10 @@ from __future__ import annotations
 ResponseFormatJSON = "json"
 ResponseFormatXML = "xml"
 
-# ipatool's (pkg/http/constants.go). The password token is tied to the
-# User-Agent that signed in. Override with app.py --user-agent.
-DEFAULT_USER_AGENT = "Configurator/2.17 (Macintosh; OS X 15.2; 24C5089c) AppleWebKit/0620.1.16.11.6"
+# ipatool 2.8 (72c47d5) uses this one for Store sign-in, purchase and download
+# requests. The password token is tied to the User-Agent that signed in.
+# Override with app.py --user-agent.
+DEFAULT_USER_AGENT = "Configurator/2.21 (Macintosh; OS X 27.0.1; 26A434) AppleWebKit/0625.2.5.11.6"
 
 FAILURE_INVALID_CREDENTIALS = "-5000"
 FAILURE_PASSWORD_TOKEN_EXPIRED = "2034"
@@ -17,6 +18,9 @@ FAILURE_LICENSE_NOT_FOUND = "9610"
 FAILURE_TEMPORARILY_UNAVAILABLE = "2059"
 # Apple's catch-all failure (e.g. an app the account can't get); only for messages.
 FAILURE_UNKNOWN_ERROR = "5002"
+# ipatool 8771e57: download answers that mean the sign-in has to be renewed.
+FAILURE_SIGN_IN_REQUIRED = "2042"
+FAILURE_DEVICE_VERIFICATION_FAILED = "1008"
 
 CUSTOMER_MESSAGE_BAD_LOGIN = "MZFinance.BadLogin.Configurator_message"
 CUSTOMER_MESSAGE_ACCOUNT_DISABLED = "Your account is disabled."
@@ -31,11 +35,17 @@ PRIVATE_INIT_DOMAIN = f"init.{ITUNES_API_DOMAIN}"
 PRIVATE_INIT_PATH = "/bag.xml"
 
 PRIVATE_APPSTORE_HOST = f"buy.{ITUNES_API_DOMAIN}"
+PRIVATE_APPSTORE_NATIVE_HOST = f"auth.{ITUNES_API_DOMAIN}"
+# ipatool 2.8 (001d889): the native sign-in endpoint the bag names since
+# November 2026, and the Store provisioning step it may ask for.
+PRIVATE_APPSTORE_NATIVE_PATH = "/auth/v1/native"
+PRIVATE_APPSTORE_PROVISIONING_URL = f"https://{PRIVATE_APPSTORE_NATIVE_HOST}/auth/v1/otp/1.5/finish"
 PRIVATE_PURCHASE_PATH = "/WebObjects/MZFinance.woa/wa/buyProduct"
 PRIVATE_DOWNLOAD_PATH = "/WebObjects/MZFinance.woa/wa/volumeStoreDownloadProduct"
 
 
 HTTP_HEADER_STOREFRONT = "X-Set-Apple-Store-Front"
+HTTP_HEADER_REQUEST_STOREFRONT = "X-Apple-Request-Store-Front"  # ipatool 001d889: when the first is missing
 HTTP_HEADER_POD = "pod"
 HTTP_HEADER_ACTION_SIGNATURE = "X-Apple-ActionSignature"
 

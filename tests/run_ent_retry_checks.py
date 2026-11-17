@@ -104,4 +104,50 @@ with flask_app.test_request_context():
         svc.get_version_metadata(acct3, app, "77")
     except SubscriptionRequiredError as exc:
         assert "emulator" in exc.not_checked, exc.not_checked
+
+# ent/download 9610 with only HTTP 5xx from the legacy endpoints: no license
+# (Arcade games without one). A real answer from them is kept.
+from ipatool_api.services.errors import LicenseRequiredError  # noqa: E402
+
+signer.unicorn_available = lambda: True
+sap.unicorn_available = lambda: True
+AppStoreService._send_ent_download = fake_send
+legacy = []
+
+
+def fake_chain(self, *a, **k):
+    answer = legacy.pop(0)
+    if answer == 504:
+        raise AppStoreError("unexpected response from Apple (download info: HTTP 504, text/html)",
+                            metadata={"status": 504})
+    raise SubscriptionRequiredError("Subscription Required")
+
+
+AppStoreService._download_product_chain = fake_chain
+acct4 = Account(**{**acct.__dict__, "password_token": "tok4"})
+with flask_app.test_request_context():
+    flask_app.preprocess_request()
+    svc = _service()
+    svc._guid = lambda: guid
+
+    def legacy_outcome(ent_answer, legacy_answer):
+        appstore_mod._ENT_DOWNLOAD_REFUSED._data.clear()
+        script[:] = [ent_answer]
+        legacy[:] = [legacy_answer]
+        try:
+            svc.list_versions(acct4, app, "77")
+        except AppStoreError as exc:
+            return exc
+        raise AssertionError("expected an error")
+
+    assert isinstance(legacy_outcome({"failureType": "9610"}, 504), LicenseRequiredError)
+    assert isinstance(legacy_outcome({"failureType": "9610"}, "sub"), SubscriptionRequiredError)
+    exc = legacy_outcome(500, 504)
+    assert not isinstance(exc, LicenseRequiredError) and "504" in str(exc), exc
+
+    sent.clear()
+    script[:] = [{"failureType": "9610"}] * 5
+    legacy[:] = [504] * 5
+    assert svc.probe_arcade_versions(acct4, app, ["5", "4", "3", "2", "1"]) is None
+    assert len(sent) == 1, "no license: older versions aren't tried"
 print("ENT RETRY OK")

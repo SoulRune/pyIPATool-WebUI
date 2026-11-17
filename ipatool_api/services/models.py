@@ -15,6 +15,10 @@ class Account:
     store_front: str
     password: Optional[str] = None
     pod: Optional[str] = None
+    # The machine-verification identity and ADI state this sign-in was
+    # provisioned with (storeauth.AnisetteState JSON); needed for the
+    # AppleMediaServices proof downloads carry.
+    anisette: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Account":
@@ -26,6 +30,7 @@ class Account:
             store_front=data.get("storeFront", ""),
             password=data.get("password"),
             pod=data.get("pod"),
+            anisette=data.get("anisette") if isinstance(data.get("anisette"), str) else None,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -37,6 +42,7 @@ class Account:
             "storeFront": self.store_front,
             "password": self.password,
             "pod": self.pod,
+            "anisette": self.anisette,
         }
 
     def to_public_dict(self) -> Dict[str, Any]:

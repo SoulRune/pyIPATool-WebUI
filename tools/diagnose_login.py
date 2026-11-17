@@ -8,8 +8,9 @@
 It walks the exact path the server takes - same code, same bytes - and shows
 every step: environment, DNS/TLS to each Apple host (incl. who issued the
 certificate, to catch antivirus/proxy TLS interception), the bag, the SAP
-signer, and the sign-in request/response in full. A control request without
-a signature is sent too, for comparison.
+signer, Apple's machine verification (GSA provisioning, the RP/SP steps and
+the AppleMediaServices proof) and the sign-in request/response in full. A
+control request without a signature is sent too, for comparison.
 
 Nothing sensitive is printed: password, tokens, DSID, cookie values, the
 signature, e-mail addresses and the device GUID are masked. The same text is
@@ -41,6 +42,7 @@ sys.path.insert(0, str(ROOT))
 import requests  # noqa: E402
 
 from ipatool_api.services import constants, netconfig  # noqa: E402
+from ipatool_api.version import __version__  # noqa: E402
 from ipatool_api.services.appstore import (  # noqa: E402
     AppStoreConfig,
     AppStoreService,
@@ -56,13 +58,16 @@ from ipatool_api.services.state import BrowserState  # noqa: E402
 
 PROBE_EMAIL = "pyipatool-diagnostics-probe@example.com"
 PROBE_PASSWORD = "not-a-real-password-0"
-HOSTS = ["init.itunes.apple.com", "s.mzstatic.com", "fpinit.itunes.apple.com", "buy.itunes.apple.com"]
+HOSTS = ["init.itunes.apple.com", "s.mzstatic.com", "fpinit.itunes.apple.com", "buy.itunes.apple.com",
+         "auth.itunes.apple.com"]
 
 # Keys whose *values* are secret in Apple's responses/requests.
 SECRET_KEYS = {
     "password", "passwordtoken", "dspersonid", "dsid", "x-dsid", "icloud-dsid", "x-token",
     "x-apple-actionsignature", "cookie", "set-cookie", "authorization", "clearToken".lower(),
     "appleid", "apple-id", "email", "username", "guid", "creditbalance", "accountinfo",
+    "x-apple-amd", "x-apple-amd-m", "x-apple-amd-data", "x-apple-i-md", "x-apple-i-md-m", "x-apple-i-md-lu",
+    "x-mme-device-id",
 }
 
 
@@ -182,6 +187,7 @@ def describe_body(body: bytes, content_type: str) -> list:
 
 def step_environment(r: Report) -> None:
     r.head("1. Environment")
+    r.item("pyIPATool WebUI", f"v{__version__}")
     r.item("OS", f"{platform.system()} {platform.release()} ({platform.machine()})")
     r.item("Python", sys.version.split()[0])
     r.item("OpenSSL", ssl.OPENSSL_VERSION)
@@ -372,7 +378,7 @@ def step_signer(r: Report, service, state, bag):
     from ipatool_api.services.sap import assets as sap_assets
     cache = service._storage_dir / "sap" / sap_assets.CACHE_VERSION
     r.item("asset cache", "present" if (cache / "AppleMediaServices").exists()
-           else "missing (will be read from Apple's macOS restore image, ~100-350 MB, once)")
+           else "missing (will be read from Apple's macOS restore image, up to 300 MB, once)")
     guid = state.device_guid()
     _state["guid"] = guid
     r.item("device GUID", mask_guid(guid))
@@ -389,11 +395,62 @@ def step_signer(r: Report, service, state, bag):
     return signer
 
 
-def login_request(bag, guid, email, password, code, attempt, signer, url=None):
+class MachineVerification:
+    """The server's machine-verification sequence (appstore._native_login),
+    one request at a time so each step can be shown."""
+
+    def __init__(self, r: Report, service, guid: str, endpoint: str) -> None:
+        from ipatool_api.services import storeauth
+
+        self.r = r
+        self.service = service
+        self.endpoint = endpoint
+        self.hardware_id = hardware_id_from_guid(guid)
+        self.bundle = service._sap_bundle()
+        started = time.time()
+        with requests.Session() as gsa:
+            self.headers, self.state = storeauth.anisette_headers(
+                gsa, storeauth.gsa_verify(service._verify, service._storage_dir), self.bundle, None)
+        r.item("GSA machine provisioning", f"OK in {time.time() - started:.1f} s")
+        self.extra = {}
+        for key, value in self.headers.items():
+            self.extra[{"X-Apple-I-MD": "X-Apple-AMD", "X-Apple-I-MD-M": "X-Apple-AMD-M"}.get(key, key)] = value
+
+    def handle(self, response) -> bool:
+        """Apply Apple's X-Apple-AMD-Action; True if the request must be sent again."""
+        from ipatool_api.services import storeauth
+
+        action = (response.headers.get("X-Apple-AMD-Action") or "").strip() if response is not None else ""
+        if action == "RP":
+            self.r.item("  machine action", "RP - sending again without the machine proof")
+            self.extra = {key: value for key, value in self.headers.items()
+                          if key not in ("X-Apple-I-MD", "X-Apple-I-MD-M", "X-Apple-I-MD-RINFO")}
+            return True
+        if action == "SP":
+            started = time.time()
+            kbsync = self.service._kbsync_blob(self.bundle, self.hardware_id, storeauth.MACHINE_DSID)
+            self.state = storeauth.provision_store_anisette(
+                self.service._http.signed_session, self.service._verify, self.bundle, self.state,
+                (response.headers.get("X-Apple-AMD-Data") or "").strip(),
+                constants.PRIVATE_APPSTORE_PROVISIONING_URL, constants.DEFAULT_USER_AGENT, kbsync,
+                self.hardware_id, self.headers)
+            self.extra, self.state = storeauth.store_amd_headers(self.bundle, self.state, self.endpoint,
+                                                                 self.hardware_id)
+            self.r.item("  machine action", f"SP - Store provisioning and AppleMediaServices proof in "
+                                            f"{time.time() - started:.1f} s, sending again")
+            return True
+        if action:
+            self.r.item("  machine action", f"{action} - unknown step")
+        return False
+
+
+def login_request(bag, guid, email, password, code, attempt, signer, url=None, extra=None):
+    headers = {"Content-Type": "application/x-apple-plist", "User-Agent": constants.DEFAULT_USER_AGENT}
+    headers.update(extra or {})
     return HTTPRequest(
         method="POST",
         url=url or bag.auth_endpoint,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers=headers,
         payload=XMLPayload(
             {"appleId": email, "attempt": str(attempt), "guid": guid, "password": f"{password}{code}", "rmp": "0", "why": "signIn"}
         ),
@@ -428,6 +485,8 @@ def classify(response) -> str:
         data = plistlib.loads(_normalize_plist_body(response.content))
     except Exception:  # noqa: BLE001
         data = None
+    if response.headers.get("X-Apple-AMD-Action"):
+        return f"machine verification step {response.headers['X-Apple-AMD-Action'].strip()} requested"
     if isinstance(data, dict):
         if data.get("passwordToken"):
             return "SIGNED IN (credentials accepted)"
@@ -447,19 +506,28 @@ def classify(response) -> str:
 
 def step_login(r: Report, service, captured, bag, signer, email, password, attempts):
     guid = _state["guid"]
-    r.head("5. Sign-in request (signed, exactly as the server sends it)")
+    r.head("5. Sign-in request (signed, with machine verification, as the server sends it)")
     results = []
     code = ""
+    machine = None
+    try:
+        machine = MachineVerification(r, service, guid, bag.auth_endpoint)
+    except AppStoreError as exc:
+        r.verdict("FAIL", f"machine verification could not start: {exc}")
     url = None  # set once Apple redirects to the account's Store pod
     for attempt in range(1, attempts + 1):
         r.out(f"- attempt {attempt}")
         hops = 0
+        steps = 0
         while True:
             # As the server does: after a pod redirect the request is resent to
             # the pod with attempt=1 (ipatool semantics).
             request_attempt = 1 if url else attempt
             response, error = send_raw(
-                service, login_request(bag, guid, email, password, code, request_attempt, signer, url), captured
+                service,
+                login_request(bag, guid, email, password, code, request_attempt, signer, url,
+                              machine.extra if machine else None),
+                captured,
             )
             if response is not None:
                 show_exchange(r, response, response.request.body or b"")
@@ -467,6 +535,22 @@ def step_login(r: Report, service, captured, bag, signer, email, password, attem
             r.item("  result", verdict)
             if error is not None:
                 r.item("  client error", str(error))
+            if machine is not None and steps < 3:
+                try:
+                    again = machine.handle(response)
+                except AppStoreError as exc:
+                    r.verdict("FAIL", f"machine verification step failed: {exc}")
+                    again = False
+                if again:
+                    steps += 1
+                    # As the server: each new request gets a fresh SAP session.
+                    try:
+                        new_signer = service._create_signer(bag.sap, hardware_id_from_guid(guid))
+                        signer.close()
+                        signer = new_signer
+                    except AppStoreError as exc:
+                        r.out(f"  (could not start a fresh SAP session: {exc})")
+                    continue
             location = response.headers.get("Location") if response is not None else None
             if response is not None and 300 <= response.status_code < 400 and location and hops < 3:
                 try:

@@ -27,8 +27,14 @@ Third-party code
 
 ipatool - Copyright (c) 2021 Majd Alfhaily, MIT License
   https://github.com/majd/ipatool
-  The App Store protocol handling and the SAP signing code in
-  ipatool_api/services/sap/ are Python ports of ipatool's Go code.
+  The App Store protocol handling, the SAP signing code in
+  ipatool_api/services/sap/, the machine verification in
+  ipatool_api/services/storeauth.py and the AppleMediaServices emulation in
+  ipatool_api/services/store_emulator/ are Python ports of ipatool's Go code.
+  store_emulator/store_profile.bin is ipatool's generated Store profile
+  (internal/store/profile), recompressed; it holds metadata and initialized
+  memory pages derived from Apple's macOS 27.0.1 AppleMediaServices
+  framework, as distributed with ipatool.
   License text: LICENSES/ipatool-MIT.txt
 
 Unicorn Engine 2.1.4 - GPLv2 (C core), BSD (Python binding)

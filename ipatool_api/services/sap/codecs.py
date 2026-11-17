@@ -298,6 +298,8 @@ def _lzfse_block(header, payload: bytes, out: bytearray) -> None:
                 pattern = out[start:]
                 repeat, rest = divmod(match, distance)
                 out += pattern * repeat + pattern[:rest]
+            if len(out) - block_start > n_raw:
+                raise CodecError("lzfse: block expands beyond its declared size")
     if len(out) - block_start != n_raw:
         raise CodecError("lzfse: decoded block size mismatch")
 
@@ -357,19 +359,27 @@ def _v2_header(src: bytes, pos: int):
     return header, header_size
 
 
-def lzfse_decode_py(src: bytes) -> bytes:
+def lzfse_decode_py(src: bytes, max_output: Optional[int] = None) -> bytes:
+    """``max_output``: refuse a stream whose blocks declare more output."""
     out = bytearray()
     pos = 0
+
+    def check(size: int) -> None:
+        if max_output is not None and len(out) + size > max_output:
+            raise CodecError("lzfse: stream expands beyond its expected size")
+
     while pos + 4 <= len(src):
         magic = src[pos:pos + 4]
         if magic == b"bvx$":
             return bytes(out)
         if magic == b"bvx-":
             size = struct.unpack_from("<I", src, pos + 4)[0]
+            check(size)
             out += src[pos + 8:pos + 8 + size]
             pos += 8 + size
         elif magic in (b"bvx1", b"bvx2"):
             header, size = (_v1_header if magic == b"bvx1" else _v2_header)(src, pos)
+            check(header[0])
             pos += size
             end = pos + header[3] + header[4]
             if end > len(src):
@@ -378,6 +388,7 @@ def lzfse_decode_py(src: bytes) -> bytes:
             pos = end
         elif magic == b"bvxn":
             n_raw, n_payload = struct.unpack_from("<II", src, pos + 4)
+            check(n_raw)
             pos += 12
             out += lzvn_decode_py(src[pos:pos + n_payload], n_raw)
             pos += n_payload
@@ -558,7 +569,7 @@ def lzfse_decompress(data: bytes, expected_size: Optional[int] = None) -> bytes:
             return package(data)
         except Exception as exc:  # noqa: BLE001 - fall back to the Python decoder
             logger.debug("native LZFSE failed: %s", exc)
-    return lzfse_decode_py(data)
+    return lzfse_decode_py(data, expected_size)
 
 
 def lzvn_decompress(data: bytes, max_size: int) -> bytes:

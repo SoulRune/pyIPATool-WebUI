@@ -17,6 +17,16 @@ class AuthCodeRequiredError(AppStoreError):
     pass
 
 
+class MachineActionError(AppStoreError):
+    """The sign-in answered with an X-Apple-AMD-Action (``RP``, ``SP``):
+    another machine-verification step is required (ipatool 001d889)."""
+
+    def __init__(self, action: str, data: str = "", metadata=None) -> None:
+        super().__init__(f"Apple asked for the machine verification step {action}", metadata=metadata)
+        self.action = action
+        self.data = data
+
+
 class PasswordTokenExpiredError(AppStoreError):
     pass
 

@@ -837,6 +837,12 @@ button.account-row:hover, button.account-row:focus-visible { background: rgba(52
   opacity: 0.7;
 }
 
+.site-version {
+  margin-top: 0.3rem;
+  font-size: 0.7rem;
+  opacity: 0.8;
+}
+
 .access-card {
   width: 100%;
   max-width: 26rem;

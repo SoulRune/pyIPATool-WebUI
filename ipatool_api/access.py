@@ -123,8 +123,9 @@ def install(app: Flask, access_password: str = "") -> None:
     @app.route("/access", methods=["GET", "POST"], endpoint="access_page")
     def access_page():
         target = request.values.get("next") or (request.script_root + "/")
-        if not target.startswith("/") or target.startswith("//"):
-            target = "/"  # only back into this site
+        if (not target.startswith("/") or target.startswith("//") or "\\" in target
+                or any(ord(c) < 0x21 or ord(c) == 0x7F for c in target)):
+            target = "/"  # only back into this site (browsers read a backslash as "/")
         error = ""
         status = 200
         if request.method == "POST":

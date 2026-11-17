@@ -1,28 +1,32 @@
 """Run Apple's FairPlay/AppleMediaServices code inside the Unicorn CPU emulator.
 
-Python port of ipatool ``internal/sap/machine`` since 0259df3 / b0fe32d
-(arm64, macOS 27 frameworks; MIT). CoreFP is relocated and mapped into an
-arm64 Unicorn instance next to AppleMediaServices, which comes from the dyld
-shared cache and stays at its cache addresses; the libSystem /
-CoreFoundation / IOKit functions they call are emulated by Python "shims"
-that a code hook dispatches. Then the five obfuscated AppleMediaServices
+Python port of ipatool ``internal/sap/machine`` (arm64, macOS 27 frameworks;
+MIT), up to ipatool 2.8. CoreFP is relocated and mapped into an arm64
+Unicorn instance next to AppleMediaServices, which comes from the dyld shared
+cache and stays at its cache addresses; the libSystem / CoreFoundation /
+IOKit / XPC functions they call are emulated by Python "shims" that a code
+hook dispatches (``shim_platform.py``). The obfuscated AppleMediaServices
 entry points are invoked with the AAPCS64 calling convention to initialize,
-run the SAP handshake and sign requests. For kbsync, CommerceKit's
-``commerce`` daemon is loaded as an extra image and called at fixed offsets.
+run the SAP handshake and sign requests. Extra images (CommerceKit's
+``commerce``, CoreADI's ``adid``, CoreFP's ``fairplayd`` and the FairPlayIOKit
+kernel extension) are loaded the same way for kbsync and the machine
+verification flow in ``modern_adi.py``.
 """
 from __future__ import annotations
 
 import ctypes
-import os
+import hashlib
 import struct
+import threading
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-from unicorn import UC_ARCH_ARM64, UC_HOOK_CODE, UC_MODE_ARM, UC_PROT_ALL, UC_QUERY_TIMEOUT, Uc, UcError
+from unicorn import UC_HOOK_CODE, UC_PROT_ALL, UC_QUERY_TIMEOUT, UcError
 from unicorn import arm64_const as _arm
 
-from . import macho
+from . import engine, macho
 from .errors import SAPError
+from .shim_platform import PlatformShims
 
 U64 = (1 << 64) - 1
 U32 = (1 << 32) - 1
@@ -46,15 +50,14 @@ MAX_OUTPUT_SIZE = 16 << 20
 MAX_GUEST_TRANSFER = 64 << 20
 SAP_GUEST_TIMEOUT = 60.0  # seconds
 
-# StoreAgent (storeagent.go since b0fe32d): CommerceKit's "commerce" daemon,
-# loaded as an extra image; private entry points at fixed offsets of the
-# pinned binary.
+# StoreAgent (storeagent.go): CommerceKit's "commerce" daemon, loaded as an
+# extra image; private entry points at fixed offsets of the pinned binary.
 STOREAGENT_BASE = 0x00001000C0000000
-_STOREAGENT_GLOBAL_INIT = STOREAGENT_BASE + 0x1312FC
-_STOREAGENT_KBSYNC = STOREAGENT_BASE + 0x19AE34
-_STOREAGENT_GLOBAL_CLOSE = STOREAGENT_BASE + 0x130EB4
-_STOREAGENT_SC_INFO_PATH = b"/Users/Shared/SC Info\x00"
-_STOREAGENT_ZERO_RETURN_ALIASES = (
+STOREAGENT_GLOBAL_INIT = STOREAGENT_BASE + 0x1312FC
+STOREAGENT_KBSYNC = STOREAGENT_BASE + 0x19AE34
+STOREAGENT_GLOBAL_CLOSE = STOREAGENT_BASE + 0x130EB4
+STOREAGENT_SC_INFO_PATH = b"/Users/Shared/SC Info\x00"
+STOREAGENT_ZERO_RETURN_ALIASES = (
     "_pthread_rwlock_rdlock",
     "_pthread_rwlock_rdlock$UNIX2003",
     "_pthread_mutex_init",
@@ -106,16 +109,6 @@ _CORE_EXPORT_NAMES = [
 ]
 _ENTRY_NAMES = ["_cp2g1b9ro", "_Mib5yocT", "_Fc3vhtJDvr", "_IPaI1oem5iL", "_jEHf8Xzsv8K"]
 
-_FAKE_HANDLE = U64
-_CORE_FP_FILE = 3
-_CORE_FP_PATH = "/System/Library/PrivateFrameworks/CoreFP.framework/CoreFP"
-_ICXS_PATH = "./../CoreFP.icxs"
-_KEY_SERIAL = "IOPlatformSerialNumber"
-_KEY_UUID = "IOPlatformUUID"
-_KEY_BOARD = "board-id"
-_KEYED_MESSAGE = "objectForKey:"
-_ONCE_DONE = 0x4F4E4345
-
 _RET = struct.pack("<I", 0xD65F03C0)
 _BRK = struct.pack("<I", 0xD4200000)
 
@@ -124,6 +117,19 @@ _ATOMIC_MASK = 0xFFE0FC00
 _CASAL32, _CASAL64 = 0x88E0FC00, 0xC8E0FC00
 _SWPAL32, _SWPAL64 = 0xB8E08000, 0xF8E08000
 _EOR3_MASK, _EOR3 = 0xFFE08000, 0xCE000000
+
+
+class ImageSpec:
+    """One extra image: name, file data, load base and, for an executable
+    taken from a kernel collection, the collection's base address."""
+
+    __slots__ = ("name", "data", "base", "kernel_base")
+
+    def __init__(self, name: str, data: bytes, base: int, kernel_base: int = 0) -> None:
+        self.name = name
+        self.data = data
+        self.base = base
+        self.kernel_base = kernel_base
 
 
 def _align(value: int, alignment: int) -> int:
@@ -140,35 +146,38 @@ def _general_register(index: int) -> Optional[int]:
     return None
 
 
-class Machine:
-    """One emulator instance holding CoreFP and AppleMediaServices."""
+class _XPCObject:
+    __slots__ = ("data", "data_address", "has_data")
 
-    def __init__(self, bundle, extra_images=(), zero_return_aliases=()) -> None:
-        self._extra_images = tuple(extra_images)  # (name, data, base)
+    def __init__(self, data: Optional[bytes]) -> None:
+        self.data = bytes(data or b"")
+        self.data_address = 0
+        self.has_data = data is not None
+
+
+class Machine(PlatformShims):
+    """One emulator instance holding CoreFP, AppleMediaServices and any extra
+    images (openRuntime)."""
+
+    def __init__(self, bundle, extra_images: Sequence = (), zero_return_aliases: Sequence[str] = (),
+                 pause_run_loop: bool = False) -> None:
+        self._extra_images: List[ImageSpec] = [
+            spec if isinstance(spec, ImageSpec) else ImageSpec(*spec) for spec in extra_images
+        ]
         self._zero_return_aliases = tuple(zero_return_aliases)
         try:
-            self._uc = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
+            self._uc = engine.new_arm64_engine()
         except UcError as exc:
             raise SAPError(
                 "this Unicorn build has no arm64 support, which sign-in needs since Apple's macOS 27 "
                 "frameworks are used - on iOS/Android rebuild it from the project folder with "
                 "'pip install --force-reinstall --no-deps ./vendor/unicorn'"
             ) from exc
-        if os.name == "nt":
-            # As upstream (engine_config_windows.go): Windows commits the JIT
-            # translation buffer eagerly, so keep it modest.
-            try:
-                self._uc.ctl_set_tcg_buffer_size(64 << 20)
-            except Exception:  # noqa: BLE001 - older bindings: keep the default
-                pass
-        # Unicorn's most capable ARM64 model; the compatibility layer below
-        # handles the few newer instructions it lacks.
-        self._uc.ctl_set_cpu_model(_arm.UC_CPU_ARM64_MAX)
         self._closed = False
         self._scratch_cursor = 0
         self._fault: Optional[Exception] = None
 
-        # Shim state.
+        # Shim state (shims.go).
         self._shim_entries: Dict[int, "_Shim"] = {}
         self._shim_symbols: Dict[str, int] = {}
         self._code_cursor = SHIM_BASE
@@ -183,6 +192,29 @@ class Machine:
         self._free_blocks: List[List[int]] = []  # [address, size]
         self._iterator = 0
         self._callback_returns: List[int] = []
+        self.xpc_data = b""
+        self.xpc_objects: Dict[int, _XPCObject] = {}
+        self.xpc_next_object = 0xFFFF000000000000
+        self.xpc_event_handler = 0
+        self.xpc_reply = b""
+        self.xpc_replied = False
+        self.xpc_sync_reply: Optional[bytes] = None
+        self.mach_port_callback = 0
+        self.mach_port_context = 0
+        self.mach_port_info = 0
+        # (input, indirect, output_size) -> (output, indirect_output, code)
+        self.fairplay_handler: Optional[Callable[[bytes, bytes, int], Tuple[bytes, bytes, int]]] = None
+        # (request, receive_size) -> reply
+        self.mach_rpc_handler: Optional[Callable[[bytes, int], bytes]] = None
+        self.mach_message_reply = b""
+        self.adi_files: Dict[str, bytes] = {}
+        self._adi_path = ""
+        self._adi_offset = 0
+        self.host_uuid = bytes(16)
+        self._pause_run_loop = pause_run_loop
+        self._aes_vtable = 0
+        self._aes_service = 0
+        self._buffer_vtable = 0
 
         self._entry: Dict[str, int] = {}
         self.exports: Dict[str, int] = {}
@@ -196,9 +228,10 @@ class Machine:
     # -- setup ------------------------------------------------------------
 
     def _open_runtime(self, bundle) -> None:
-        core = macho.Image("CoreFP", bundle.core_fp)
-        media = macho.PrelinkedImage("AppleMediaServices", bundle.apple_media_services)
-        extras = [(name, macho.Image(name, data), base) for name, data, base in self._extra_images]
+        stripped = bool(getattr(bundle, "pac_stripped", False))
+        core = macho.Image("CoreFP", bundle.core_fp, pac_stripped=stripped)
+        media = macho.PrelinkedImage("AppleMediaServices", bundle.apple_media_services, pac_stripped=stripped)
+        extras = [(spec, macho.Image(spec.name, spec.data, pac_stripped=stripped)) for spec in self._extra_images]
 
         exports: Dict[str, int] = {}
         for name in _CORE_EXPORT_NAMES:
@@ -218,8 +251,6 @@ class Machine:
         self._uc.mem_write(RETURN_ADDRESS, _BRK)  # sentinel at the return address
 
         self._setup_shims()
-        if self._zero_return_aliases:
-            self._alias(list(self._zero_return_aliases), self._sh_return_zero)
 
         def resolve(name: str) -> int:
             if name in exports:
@@ -229,12 +260,23 @@ class Machine:
         self._load_prelinked_slots(SHARED_CACHE_SLOTS, resolve)
         self._load_prelinked_functions(SHARED_CACHE_FUNCTIONS, resolve)
 
-        core.relocate(CORE_FP_BASE, resolve)
-        core.load(self._uc)
-        media.prepare_prelinked(SHARED_CACHE_FUNCTIONS, resolve)
-        media.load(self._uc)
-        for _name, image, base in extras:
-            image.relocate(base, resolve)
+        images = [core, media] + [image for _spec, image in extras]
+
+        def prepare(resolver: Callable[[str], int]) -> None:
+            core.relocate(CORE_FP_BASE, resolver)
+            media.prepare_prelinked(SHARED_CACHE_FUNCTIONS, resolver)
+            for spec, image in extras:
+                image.relocate(spec.base, resolver)
+                if spec.kernel_base:
+                    image.relocate_kernel_cache_pointers(spec.base, spec.kernel_base, resolver)
+
+        refs = (bundle.core_fp, bundle.apple_media_services) + tuple(spec.data for spec in self._extra_images)
+        key = (stripped, self._zero_return_aliases,
+               tuple((spec.name, spec.base, spec.kernel_base) for spec in self._extra_images),
+               tuple(id(ref) for ref in refs))
+        bases = [CORE_FP_BASE, 0] + [spec.base for spec in self._extra_images]
+        _prepare_images(key, refs, images, bases, prepare, resolve)
+        for image in images:
             image.load(self._uc)
 
         self._entry = {
@@ -270,68 +312,68 @@ class Machine:
     # -- public API mirrors signer.Signer's needs -------------------------
 
     def initialize(self, hardware_id: bytes) -> int:
-        hardware = _hardware_block(hardware_id)
-        self._begin_call()
+        hardware = hardware_block(hardware_id)
+        self.begin_call()
         try:
-            context_field = self._scratch(None, 8)
-            hardware_addr = self._scratch(hardware, len(hardware))
-            status = self._invoke(self._entry["initialize"], context_field, hardware_addr)
-            if _to_i32(status) != 0:
-                raise SAPError(f"SAP initialization returned {_to_i32(status)}")
-            context = self._read_u64(context_field)
+            context_field = self.scratch(None, 8)
+            hardware_addr = self.scratch(hardware, len(hardware))
+            status = self.invoke(self._entry["initialize"], context_field, hardware_addr)
+            if to_i32(status) != 0:
+                raise SAPError(f"SAP initialization returned {to_i32(status)}")
+            context = self.read_u64(context_field)
             if context == 0:
                 raise SAPError("SAP initialization returned a null context")
             return context
         finally:
-            self._clear_scratch()
+            self.clear_scratch()
 
     def exchange(self, version: int, hardware_id: bytes, context: int, data: bytes):
         if len(data) > U32:
             raise SAPError("SAP exchange input is too large")
-        hardware = _hardware_block(hardware_id)
-        self._begin_call()
+        hardware = hardware_block(hardware_id)
+        self.begin_call()
         try:
-            hardware_addr = self._scratch(hardware, len(hardware))
-            input_addr = self._scratch(data, len(data))
-            output_field = self._scratch(None, 8)
-            length_field = self._scratch(None, 8)
-            result_field = self._scratch(None, 4)
-            status = self._invoke(
+            hardware_addr = self.scratch(hardware, len(hardware))
+            input_addr = self.scratch(data, len(data))
+            output_field = self.scratch(None, 8)
+            length_field = self.scratch(None, 8)
+            result_field = self.scratch(None, 4)
+            status = self.invoke(
                 self._entry["exchange"], version, hardware_addr, context, input_addr, len(data),
                 output_field, length_field, result_field,
             )
-            if _to_i32(status) != 0:
-                raise SAPError(f"SAP exchange returned {_to_i32(status)}")
+            if to_i32(status) != 0:
+                raise SAPError(f"SAP exchange returned {to_i32(status)}")
             output = self._consume_output(output_field, length_field)
-            state = self._read_u32(result_field)
-            return output, _to_i32(state)
+            state = self.read_u32(result_field)
+            return output, to_i32(state)
         finally:
-            self._clear_scratch()
+            self.clear_scratch()
 
     def sign(self, context: int, data: bytes) -> bytes:
         if len(data) > U32:
             raise SAPError("SAP signing input is too large")
-        self._begin_call()
+        self.begin_call()
         try:
-            input_addr = self._scratch(data, len(data))
-            output_field = self._scratch(None, 8)
-            length_field = self._scratch(None, 8)
-            status = self._invoke(self._entry["sign"], context, input_addr, len(data), output_field, length_field)
-            if _to_i32(status) != 0:
-                raise SAPError(f"SAP signing returned {_to_i32(status)}")
+            input_addr = self.scratch(data, len(data))
+            output_field = self.scratch(None, 8)
+            length_field = self.scratch(None, 8)
+            status = self.invoke(self._entry["sign"], context, input_addr, len(data), output_field, length_field)
+            if to_i32(status) != 0:
+                raise SAPError(f"SAP signing returned {to_i32(status)}")
             return self._consume_output(output_field, length_field)
         finally:
-            self._clear_scratch()
+            self.clear_scratch()
 
     def teardown(self, context: int) -> None:
-        status = self._invoke(self._entry["teardown"], context)
-        if _to_i32(status) != 0:
-            raise SAPError(f"SAP teardown returned {_to_i32(status)}")
+        status = self.invoke(self._entry["teardown"], context)
+        if to_i32(status) != 0:
+            raise SAPError(f"SAP teardown returned {to_i32(status)}")
 
     def _dispose(self, output: int) -> None:
-        status = self._invoke(self._entry["dispose"], output)
-        if _to_i32(status) != 0:
-            raise SAPError(f"SAP storage disposal returned {_to_i32(status)}")
+        status = self.invoke(self._entry["dispose"], output)
+        if to_i32(status) != 0:
+            raise SAPError(f"SAP storage disposal returned {to_i32(status)}")
 
     def close(self) -> None:
         if self._closed:
@@ -341,7 +383,7 @@ class Machine:
 
     # -- calling convention ----------------------------------------------
 
-    def _invoke(self, function: int, *arguments: int) -> int:
+    def invoke(self, function: int, *arguments: int) -> int:
         if self._closed:
             raise SAPError("SAP guest machine is closed")
         if not function:
@@ -353,12 +395,11 @@ class Machine:
         stack = STACK_END - extra * 8
         stack -= stack % 16
         for index in range(extra):
-            self._write_u64(stack + index * 8, arguments[len(_ARG_REGISTERS) + index] & U64)
+            self.write_u64(stack + index * 8, arguments[len(_ARG_REGISTERS) + index] & U64)
         uc.reg_write(_arm.UC_ARM64_REG_SP, stack)
         uc.reg_write(_arm.UC_ARM64_REG_LR, RETURN_ADDRESS)
 
         self._fault = None
-        self._callback_returns = []
         # SAP's cryptographic routines have input- and host-dependent
         # instruction counts: bound execution by wall time instead.
         deadline = time.monotonic() + SAP_GUEST_TIMEOUT
@@ -368,7 +409,8 @@ class Machine:
             if remaining <= 0:
                 raise SAPError(f"SAP guest timed out after {SAP_GUEST_TIMEOUT:g}s")
             try:
-                uc.emu_start(start, RETURN_ADDRESS, int(remaining * 1_000_000), 0)
+                with engine.emulation():
+                    uc.emu_start(start, RETURN_ADDRESS, int(remaining * 1_000_000), 0)
                 break
             except UcError as exc:
                 if self._fault is not None:
@@ -444,10 +486,10 @@ class Machine:
 
     # -- scratch ----------------------------------------------------------
 
-    def _begin_call(self) -> None:
+    def begin_call(self) -> None:
         self._scratch_cursor = 0
 
-    def _scratch(self, data: Optional[bytes], size: int) -> int:
+    def scratch(self, data: Optional[bytes], size: int) -> int:
         reserved = _align(max(size, 1), 16)
         if self._scratch_cursor > SCRATCH_SIZE or reserved > SCRATCH_SIZE - self._scratch_cursor:
             raise SAPError("SAP guest scratch space exhausted")
@@ -461,14 +503,14 @@ class Machine:
             self._uc.mem_write(address, b"\x00" * size)
         return address
 
-    def _clear_scratch(self) -> None:
+    def clear_scratch(self) -> None:
         if self._scratch_cursor and self._uc is not None and not self._closed:
             self._uc.mem_write(SCRATCH_BASE, b"\x00" * self._scratch_cursor)
         self._scratch_cursor = 0
 
     def _consume_output(self, pointer_field: int, length_field: int) -> bytes:
-        pointer = self._read_u64(pointer_field)
-        length = self._read_u64(length_field)
+        pointer = self.read_u64(pointer_field)
+        length = self.read_u64(length_field)
         output = b""
         error: Optional[Exception] = None
         if length > MAX_OUTPUT_SIZE:
@@ -492,35 +534,35 @@ class Machine:
     # -- StoreAgent (kbsync) ------------------------------------------------
 
     def _storeagent_global_init(self, hardware_id: bytes) -> int:
-        hardware = _hardware_block(hardware_id)
-        self._begin_call()
+        hardware = hardware_block(hardware_id)
+        self.begin_call()
         try:
-            hardware_address = self._scratch(hardware, len(hardware))
-            path_address = self._scratch(_STOREAGENT_SC_INFO_PATH, len(_STOREAGENT_SC_INFO_PATH))
-            context_field = self._scratch(None, 4)
-            status = _to_i32(self._invoke(_STOREAGENT_GLOBAL_INIT, 0, hardware_address, path_address, context_field))
+            hardware_address = self.scratch(hardware, len(hardware))
+            path_address = self.scratch(STOREAGENT_SC_INFO_PATH, len(STOREAGENT_SC_INFO_PATH))
+            context_field = self.scratch(None, 4)
+            status = to_i32(self.invoke(STOREAGENT_GLOBAL_INIT, 0, hardware_address, path_address, context_field))
             if status != 0:
                 raise SAPError(f"StoreAgent global initialization returned {status}")
-            value = self._read_u32(context_field)
+            value = self.read_u32(context_field)
             if value == 0:
                 raise SAPError("StoreAgent global initialization returned a null context")
             return value
         finally:
-            self._clear_scratch()
+            self.clear_scratch()
 
     def _storeagent_global_close(self, global_context: int) -> None:
-        status = _to_i32(self._invoke(_STOREAGENT_GLOBAL_CLOSE, global_context))
+        status = to_i32(self.invoke(STOREAGENT_GLOBAL_CLOSE, global_context))
         if status != 0:
             raise SAPError(f"StoreAgent global context close returned {status}")
 
     def _storeagent_kbsync(self, global_context: int, dsid: int) -> bytes:
-        self._begin_call()
+        self.begin_call()
         try:
-            pointer_field = self._scratch(None, 8)
+            pointer_field = self.scratch(None, 8)
             # StoreAgent writes a uint32 length; the zeroed upper half lets the
             # shared bounds-checked output path read it as 64-bit.
-            length_field = self._scratch(None, 8)
-            status = _to_i32(self._invoke(_STOREAGENT_KBSYNC, global_context, dsid, 0, 1, pointer_field, length_field))
+            length_field = self.scratch(None, 8)
+            status = to_i32(self.invoke(STOREAGENT_KBSYNC, global_context, dsid, 0, 1, pointer_field, length_field))
             output: Optional[bytes] = None
             output_error: Optional[Exception] = None
             try:
@@ -535,26 +577,33 @@ class Machine:
                 raise SAPError("StoreAgent kbsync returned an empty buffer")
             return output
         finally:
-            self._clear_scratch()
+            self.clear_scratch()
 
     # -- memory helpers ---------------------------------------------------
 
-    def _read_u32(self, address: int) -> int:
+    def mem_read(self, address: int, size: int) -> bytes:
+        return bytes(self._uc.mem_read(address, size)) if size else b""
+
+    def mem_write(self, address: int, data: bytes) -> None:
+        if data:
+            self._uc.mem_write(address, bytes(data))
+
+    def read_u32(self, address: int) -> int:
         return struct.unpack("<I", bytes(self._uc.mem_read(address, 4)))[0]
 
-    def _read_u64(self, address: int) -> int:
+    def read_u64(self, address: int) -> int:
         return struct.unpack("<Q", bytes(self._uc.mem_read(address, 8)))[0]
 
-    def _write_u32(self, address: int, value: int) -> None:
+    def write_u32(self, address: int, value: int) -> None:
         self._uc.mem_write(address, struct.pack("<I", value & U32))
 
-    def _write_u64(self, address: int, value: int) -> None:
+    def write_u64(self, address: int, value: int) -> None:
         self._uc.mem_write(address, struct.pack("<Q", value & U64))
 
     def _read_cstring(self, address: int, maximum: int = 4096) -> bytes:
         out = bytearray()
         while len(out) < maximum:
-            chunk_size = min(256, PAGE_SIZE - (address + len(out)) % PAGE_SIZE)
+            chunk_size = min(256, PAGE_SIZE - (address + len(out)) % PAGE_SIZE, maximum - len(out))
             chunk = bytes(self._uc.mem_read(address + len(out), chunk_size))
             end = chunk.find(b"\x00")
             if end >= 0:
@@ -572,6 +621,8 @@ class Machine:
         self._uc.mem_map(SHIM_BASE, SHIM_SIZE, UC_PROT_ALL)
         self._register_memory_shims()
         self._register_platform_shims()
+        if self._zero_return_aliases:
+            self._alias(list(self._zero_return_aliases), self._sh_return_zero)
         self._uc.hook_add(UC_HOOK_CODE, self._dispatch, None, SHIM_BASE, SHIM_BASE + SHIM_CODE_SIZE - 1)
 
     def _shim_resolve(self, name: str) -> int:
@@ -637,7 +688,7 @@ class Machine:
         if index < 0:
             raise SAPError("negative guest argument index")
         stack = self._uc.reg_read(_arm.UC_ARM64_REG_SP)
-        return self._read_u64(stack + (index - len(_ARG_REGISTERS)) * 8)
+        return self.read_u64(stack + (index - len(_ARG_REGISTERS)) * 8)
 
     def _set_result(self, value: int) -> None:
         self._uc.reg_write(_arm.UC_ARM64_REG_X0, value & U64)
@@ -647,15 +698,26 @@ class Machine:
             raise SAPError(f"guest transfer size {value} exceeds limit")
         return value
 
+    def new_xpc_object(self, data: Optional[bytes]) -> int:
+        self.xpc_next_object = (self.xpc_next_object + 1) & U64
+        self.xpc_objects[self.xpc_next_object] = _XPCObject(data)
+        return self.xpc_next_object
+
     # -- memory shims (shim_memory.go) -----------------------------------
 
     def _register_memory_shims(self) -> None:
-        self._alias(["_malloc"], self._sh_malloc)
+        self._alias(["_malloc", "_IOMalloc", "_IOMallocData"], self._sh_malloc)
+        self._alias(["_IOMallocAligned"], self._sh_malloc_aligned)
+        self._alias(["_IOMallocTypeImpl"], self._sh_malloc_typed)
+        self._alias(["_IOMallocTypeVarImpl", "_OSObject_typed_operator_new"], self._sh_malloc_typed_variable)
+        self._alias(["_IOLockAlloc", "_IORWLockAlloc"], self._sh_malloc_lock)
         self._alias(["_malloc_good_size"], self._sh_malloc_good_size)
         self._alias(["_malloc_size"], self._sh_malloc_size)
         self._alias(["_calloc"], self._sh_calloc)
         self._alias(["_realloc", "_reallocf"], self._sh_realloc)
-        self._alias(["_free"], self._sh_free)
+        self._alias(["_free", "_IOFree", "_IOFreeAligned", "_IOFreeData", "_IOLockFree", "_IORWLockFree",
+                     "_OSObject_typed_operator_delete"], self._sh_free)
+        self._alias(["_IOFreeTypeImpl", "_IOFreeTypeVarImpl"], self._sh_free_typed)
         self._alias(["_mmap"], self._sh_mmap)
         self._alias(["_munmap"], self._sh_munmap)
         self._alias(["_vm_allocate"], self._sh_vm_allocate)
@@ -669,8 +731,9 @@ class Machine:
         self._alias(["_strcmp"], self._sh_strcmp)
         self._alias(["_strncmp"], self._sh_strncmp)
         self._alias(["_strlen"], self._sh_strlen)
+        self._alias(["_strnlen"], self._sh_strnlen)
 
-    def _allocate(self, size: int) -> int:
+    def allocate(self, size: int) -> int:
         if size > MAX_GUEST_TRANSFER:
             raise SAPError(f"allocation size {size} exceeds limit")
         reserved = _align(max(size, 1), 16)
@@ -694,7 +757,7 @@ class Machine:
         self._alloc_sizes[address] = size
         return address
 
-    def _allocate_aligned(self, size: int, alignment: int) -> int:
+    def allocate_aligned(self, size: int, alignment: int) -> int:
         if size > MAX_GUEST_TRANSFER:
             raise SAPError(f"allocation size {size} exceeds limit")
         reserved = _align(max(size, 1), alignment)
@@ -734,7 +797,36 @@ class Machine:
             self._free_blocks.pop()
 
     def _sh_malloc(self) -> None:
-        self._set_result(self._allocate(self._argument(0)))
+        self._set_result(self.allocate(self._argument(0)))
+
+    def _sh_malloc_aligned(self) -> None:
+        size = self._argument(0)
+        alignment = self._argument(1)
+        if alignment == 0 or alignment & (alignment - 1):
+            raise SAPError(f"invalid allocation alignment {alignment:#x}")
+        self._set_result(self.allocate_aligned(size, alignment))
+
+    def _sh_malloc_typed(self) -> None:
+        view = self._argument(0)
+        try:
+            size = self.read_u32(view + 44)
+        except UcError as exc:
+            raise SAPError(f"read typed allocation size: {exc}") from exc
+        self._set_result(self.allocate(size & 0x00FFFFFF))
+
+    def _sh_malloc_typed_variable(self) -> None:
+        self._set_result(self.allocate(self._argument(1)))
+
+    def _sh_malloc_lock(self) -> None:
+        address = self.allocate(8)
+        self._uc.mem_write(address, b"\x00" * 8)
+        self._set_result(address)
+
+    def _sh_free_typed(self) -> None:
+        address = self._argument(1)
+        if address:
+            self._release(address)
+        self._set_result(0)
 
     def _sh_malloc_good_size(self) -> None:
         self._set_result(_align(max(self._argument(0), 1), 16))
@@ -748,7 +840,7 @@ class Machine:
         if count != 0 and size > U64 // count:
             raise SAPError("allocation size overflows")
         total = count * size
-        address = self._allocate(total)
+        address = self.allocate(total)
         if total:
             self._uc.mem_write(address, b"\x00" * total)
         self._set_result(address)
@@ -757,7 +849,7 @@ class Machine:
         old = self._argument(0)
         new_size = self._argument(1)
         if old == 0:
-            self._set_result(self._allocate(new_size))
+            self._set_result(self.allocate(new_size))
             return
         reserved = self._allocations.get(old)
         if reserved is None:
@@ -766,9 +858,10 @@ class Machine:
             self._alloc_sizes[old] = new_size
             self._set_result(old)
             return
-        new_address = self._allocate(new_size)
-        data = bytes(self._uc.mem_read(old, self._alloc_sizes[old]))
-        self._uc.mem_write(new_address, data)
+        new_address = self.allocate(new_size)
+        data = bytes(self._uc.mem_read(old, self._alloc_sizes[old])) if self._alloc_sizes[old] else b""
+        if data:
+            self._uc.mem_write(new_address, data)
         self._release(old)
         self._set_result(new_address)
 
@@ -781,7 +874,7 @@ class Machine:
     def _sh_mmap(self) -> None:
         length = self._argument(1)
         try:
-            address = self._allocate_aligned(length, PAGE_SIZE)
+            address = self.allocate_aligned(length, PAGE_SIZE)
         except SAPError:
             self._sh_return_minus_one()
             return
@@ -800,12 +893,12 @@ class Machine:
         field = self._argument(1)
         size = self._argument(2)
         try:
-            address = self._allocate_aligned(size, PAGE_SIZE)
+            address = self.allocate_aligned(size, PAGE_SIZE)
         except SAPError:
             self._set_result(3)  # KERN_NO_SPACE
             return
         self._uc.mem_write(address, b"\x00" * size)
-        self._write_u64(field, address)
+        self.write_u64(field, address)
         self._set_result(0)
 
     def _sh_vm_deallocate(self) -> None:
@@ -881,247 +974,65 @@ class Machine:
     def _sh_strlen(self) -> None:
         self._set_result(len(self._read_cstring(self._argument(0))))
 
-    # -- platform shims (shim_platform.go) -------------------------------
-
-    def _register_platform_shims(self) -> None:
-        self._alias(
-            [
-                "_CFBundleGetMainBundle", "_CFDataGetBytePtr", "_CFDataGetLength",
-                "_CFStringGetLength", "_CFStringGetMaximumSizeForEncoding", "_CFUUIDCreateString",
-                "_IORegistryEntryFromPath", "_IORegistryEntrySearchCFProperty", "_IOServiceMatching",
-                "_getenv", "_pthread_self",
-            ],
-            self._sh_return_zero,
-        )
-        self._alias(
-            [
-                "_CFDictionaryGetValue", "_DADiskCopyDescription", "_DADiskCreateFromBSDName",
-                "_DASessionCreate", "_IORegistryEntryCreateCFProperty",
-            ],
-            self._sh_return_fake_handle,
-        )
-        self._alias(
-            [
-                "_CFRelease", "_IOObjectRelease", "_close", "_close$UNIX2003",
-                "_pthread_mutex_lock", "_pthread_mutex_unlock",
-                "_pthread_rwlock_init", "_pthread_rwlock_init$UNIX2003",
-                "_pthread_rwlock_unlock", "_pthread_rwlock_unlock$UNIX2003",
-                "_pthread_rwlock_wrlock", "_pthread_rwlock_wrlock$UNIX2003",
-            ],
-            self._sh_return_zero,
-        )
-        self._alias(["_CFStringCreateWithCString"], self._sh_cfstring_create)
-        self._alias(["_CFStringCreateWithCStringNoCopy"], self._sh_return_zero)
-        self._alias(["_CFStringGetCString"], self._sh_cfstring_get_cstring)
-        self._alias(["___chkstk_darwin", "____chkstk_darwin"], self._sh_return_unchanged)
-        self._alias(["_IOIteratorNext"], self._sh_io_iterator_next)
-        self._alias(["_IORegistryEntryGetParentEntry"], self._sh_io_registry_parent)
-        self._alias(["_IOServiceGetMatchingServices"], self._sh_io_matching_services)
-        self._alias(["_IOServiceGetMatchingService"], self._sh_return_u32_max)
-        self._alias(["_OSAtomicCompareAndSwap32Barrier"], self._sh_cas32)
-        self._alias(["___error"], self._sh_error_pointer)
-        self._alias(["_abort", "___stack_chk_fail", "dyld_stub_binder"], self._sh_abort)
-        self._alias(["_arc4random"], self._sh_arc4random)
-        self._alias(["_basename"], self._sh_basename)
-        self._alias(["_bootstrap_look_up"], self._sh_bootstrap_look_up)
-        self._alias(["_dispatch_once"], self._sh_dispatch_once)
-        self._alias(["_dlopen"], self._sh_dlopen)
-        self._alias(["_dlsym"], self._sh_dlsym)
-        self._alias(
-            ["_fcntl", "_fcntl$UNIX2003", "_lstat$INODE64", "_statfs", "_statfs$INODE64"],
-            self._sh_return_minus_one,
-        )
-        self._alias(["_gettimeofday"], self._sh_gettimeofday)
-        self._alias(["_objc_msgSend"], self._sh_objc_msg_send)
-        self._alias(["_open", "_open$UNIX2003"], self._sh_open)
-        self._alias(["_pthread_once"], self._sh_pthread_once)
-        self._alias(["_read", "_read$UNIX2003"], self._sh_read)
-        self._alias(["_sysctl"], self._sh_return_minus_one)
-        self._alias(["_sysctlbyname"], self._sh_sysctlbyname)
-        self._alias(["_sysconf"], self._sh_sysconf)
-
-        self._errno_addr = self._add_data("guest.errno", b"\x00" * 8)
-        self._add_data("___stack_chk_guard", bytes([0xA5, 0x71, 0x3C, 0xD9, 0x86, 0x42, 0xEF, 0x10]))
-        for name in ("_kCFAllocatorDefault", "_kCFAllocatorNull", "_kDADiskDescriptionVolumeUUIDKey", "_kIOMasterPortDefault"):
-            self._add_data(name, b"\x00" * 8)
-        self._add_function("callback.complete", self._sh_callback_complete)
-
-    def _sh_return_zero(self) -> None:
-        self._set_result(0)
-
-    def _sh_return_unchanged(self) -> None:
-        pass
-
-    def _sh_return_fake_handle(self) -> None:
-        self._set_result(_FAKE_HANDLE)
-
-    def _sh_return_u32_max(self) -> None:
-        self._set_result(U32)
-
-    def _sh_return_minus_one(self) -> None:
-        self._set_result(U64)
-
-    def _sh_cfstring_create(self) -> None:
-        value = self._read_text(self._argument(1))
-        self._set_result(_FAKE_HANDLE if value in (_KEY_SERIAL, _KEY_UUID, _KEY_BOARD) else 0)
-
-    def _sh_cfstring_get_cstring(self) -> None:
-        buffer = self._argument(1)
-        capacity = self._argument(2)
-        if buffer == 0 or capacity == 0:
-            self._set_result(0)
-            return
-        self._uc.mem_write(buffer, b"\x00")
-        self._set_result(1)
-
-    def _sh_io_iterator_next(self) -> None:
-        self._iterator += 1
-        self._set_result(self._iterator % 2)
-
-    def _sh_io_registry_parent(self) -> None:
-        parent = self._argument(2)
-        if parent == 0:
-            raise SAPError("parent registry entry output is null")
-        self._write_u32(parent, U32)
-        self._set_result(0)
-
-    def _sh_io_matching_services(self) -> None:
-        iterator = self._argument(2)
-        if iterator == 0:
-            raise SAPError("matching services iterator output is null")
-        self._iterator = 0
-        self._write_u32(iterator, U32)
-        self._set_result(0)
-
-    def _sh_cas32(self) -> None:
-        old = self._argument(0) & U32
-        new = self._argument(1) & U32
-        address = self._argument(2)
-        current = self._read_u32(address)
-        if current != old:
-            self._set_result(0)
-            return
-        self._write_u32(address, new)
-        self._set_result(1)
-
-    def _sh_error_pointer(self) -> None:
-        self._set_result(self._errno_addr)
-
-    def _sh_abort(self) -> None:
-        raise SAPError("guest aborted")
-
-    def _sh_arc4random(self) -> None:
-        self._set_result(struct.unpack("<I", os.urandom(4))[0])
-
-    def _sh_basename(self) -> None:
+    def _sh_strnlen(self) -> None:
         address = self._argument(0)
-        value = self._read_cstring(address).rstrip(b"/")
-        index = value.rfind(b"/")
-        self._set_result(address + index + 1 if index >= 0 else address)
+        limit = self._argument(1)
+        if limit > MAX_GUEST_TRANSFER:
+            raise SAPError(f"string length limit {limit} exceeds maximum")
+        offset = 0
+        while offset < limit:
+            chunk = min(limit - offset, PAGE_SIZE - (address + offset) % PAGE_SIZE)
+            data = bytes(self._uc.mem_read(address + offset, chunk))
+            index = data.find(b"\x00")
+            if index >= 0:
+                self._set_result(offset + index)
+                return
+            offset += chunk
+        self._set_result(limit)
 
-    def _sh_bootstrap_look_up(self) -> None:
-        service = self._argument(2)
-        if service:
-            self._write_u32(service, 0)
-        self._set_result(5)  # KERN_FAILURE
 
-    def _sh_dlopen(self) -> None:
-        path = self._read_text(self._argument(0))
-        self._set_result(_FAKE_HANDLE if path == _CORE_FP_PATH else 0)
+# Relocated images by machine configuration (ipatool 2cfd33f "reuse immutable
+# emulator image preparation"). Relocation only depends on the image, its load
+# address and the addresses the services get, and those are assigned in the
+# same order by every machine of a configuration: a cached result is used
+# after replaying the recorded lookups, which registers the same services at
+# the same addresses (checked; any difference prepares the images again).
+_PREPARED: Dict[tuple, tuple] = {}
+_PREPARED_DATA: Dict[bytes, bytes] = {}  # digest -> contents, shared between configurations
+_PREPARED_LOCK = threading.Lock()
+_PREPARED_LIMIT = 8
 
-    def _sh_dlsym(self) -> None:
-        name = self._read_text(self._argument(1))
-        self._set_result(self._core_exports.get("_" + name, 0))
 
-    def _sh_gettimeofday(self) -> None:
-        time_addr = self._argument(0)
-        zone_addr = self._argument(1)
-        now = time.time()
-        if time_addr:
-            seconds = int(now)
-            micros = int((now - seconds) * 1_000_000)
-            self._uc.mem_write(time_addr, struct.pack("<QI", seconds, micros) + b"\x00" * 4)
-        if zone_addr:
-            self._uc.mem_write(zone_addr, b"\x00" * 8)
-        self._set_result(0)
-
-    def _sh_objc_msg_send(self) -> None:
-        selector = self._read_text(self._argument(1))
-        self._set_result(_FAKE_HANDLE if selector == _KEYED_MESSAGE else 0)
-
-    def _sh_open(self) -> None:
-        path = self._read_text(self._argument(0))
-        if path == _ICXS_PATH:
-            self._icxs_offset = 0
-            self._set_result(_CORE_FP_FILE)
+def _prepare_images(key, refs, images, bases, prepare, resolve) -> None:
+    with _PREPARED_LOCK:
+        entry = _PREPARED.get(key)
+    if entry is not None and len(entry[0]) == len(refs) and all(a is b for a, b in zip(entry[0], refs)):
+        _refs, digests, calls = entry
+        with _PREPARED_LOCK:
+            prepared = [_PREPARED_DATA.get(digest) for digest in digests]
+        if all(data is not None for data in prepared) and all(resolve(name) == address for name, address in calls):
+            for image, data, base in zip(images, prepared, bases):
+                image.adopt(data, base)
             return
-        self._sh_return_minus_one()
+    calls: List[Tuple[str, int]] = []
 
-    def _sh_pthread_once(self) -> None:
-        control = self._argument(0)
-        initializer = self._argument(1)
-        value = self._read_u64(control)
-        if value in (0, _ONCE_DONE):
-            self._set_result(0)
-            return
-        self._write_u64(control, _ONCE_DONE)
-        self._invoke_callback(initializer)
+    def recording(name: str) -> int:
+        address = resolve(name)
+        calls.append((name, address))
+        return address
 
-    def _sh_dispatch_once(self) -> None:
-        predicate = self._argument(0)
-        block = self._argument(1)
-        if self._read_u64(predicate) == U64:
-            self._set_result(0)
-            return
-        self._write_u64(predicate, U64)
-        initializer = self._read_u64(block + 16)
-        self._uc.reg_write(_arm.UC_ARM64_REG_X0, block)
-        self._invoke_callback(initializer)
-
-    def _invoke_callback(self, initializer: int) -> None:
-        """Run a guest callback, then return to the shim's caller: the
-        callback "returns" into callback.complete, which restores LR."""
-        self._callback_returns.append(self._uc.reg_read(_arm.UC_ARM64_REG_LR))
-        self._uc.reg_write(_arm.UC_ARM64_REG_LR, self._shim_symbols["callback.complete"])
-        self._uc.reg_write(_arm.UC_ARM64_REG_PC, initializer)
-
-    def _sh_callback_complete(self) -> None:
-        if not self._callback_returns:
-            raise SAPError("guest callback completion has no return address")
-        self._uc.reg_write(_arm.UC_ARM64_REG_LR, self._callback_returns.pop())
-        self._set_result(0)
-
-    def _sh_read(self) -> None:
-        descriptor = self._argument(0)
-        buffer = self._argument(1)
-        requested = self._argument(2)
-        if descriptor != _CORE_FP_FILE:
-            self._sh_return_minus_one()
-            return
-        size = self._checked_size(requested)
-        remaining = len(self._icxs) - self._icxs_offset
-        size = min(size, remaining)
-        if size:
-            self._uc.mem_write(buffer, self._icxs[self._icxs_offset : self._icxs_offset + size])
-            self._icxs_offset += size
-        self._set_result(size)
-
-    def _sh_sysctlbyname(self) -> None:
-        length_addr = self._argument(2)
-        if length_addr:
-            self._write_u64(length_addr, 0)
-        self._set_result(0)
-
-    def _sh_sysconf(self) -> None:
-        name = self._argument(0)
-        if name == 29:  # _SC_PAGESIZE
-            self._set_result(PAGE_SIZE)
-        elif name in (57, 58):  # _SC_NPROCESSORS_CONF / _ONLN
-            self._set_result(1)
-        elif name == 200:  # _SC_PHYS_PAGES
-            self._set_result(HEAP_SIZE // PAGE_SIZE)
-        else:
-            self._sh_return_minus_one()
+    prepare(recording)
+    contents = [bytes(image.data) for image in images]
+    digests = tuple(hashlib.blake2b(data, digest_size=20).digest() for data in contents)
+    with _PREPARED_LOCK:
+        if key not in _PREPARED and len(_PREPARED) >= _PREPARED_LIMIT:
+            _PREPARED.pop(next(iter(_PREPARED)))
+        for digest, data in zip(digests, contents):
+            _PREPARED_DATA.setdefault(digest, data)
+        _PREPARED[key] = (refs, digests, tuple(calls))
+        used = {digest for entry in _PREPARED.values() for digest in entry[1]}
+        for digest in [d for d in _PREPARED_DATA if d not in used]:
+            del _PREPARED_DATA[digest]
 
 
 class _Shim:
@@ -1132,7 +1043,7 @@ class _Shim:
         self.handler = handler
 
 
-def _hardware_block(hardware_id: bytes) -> bytes:
+def hardware_block(hardware_id: bytes) -> bytes:
     if not hardware_id or len(hardware_id) > 20:
         raise SAPError("hardware ID must contain between 1 and 20 bytes")
     return struct.pack("<I", len(hardware_id)) + hardware_id + b"\x00" * (20 - len(hardware_id))
@@ -1146,8 +1057,8 @@ def generate_kbsync(bundle, hardware_id: bytes, dsid: int) -> bytes:
         raise SAPError("kbsync requires a nonzero account DSID")
     machine = Machine(
         bundle,
-        extra_images=[("commerce", bundle.commerce, STOREAGENT_BASE)],
-        zero_return_aliases=_STOREAGENT_ZERO_RETURN_ALIASES,
+        extra_images=[ImageSpec("commerce", bundle.commerce, STOREAGENT_BASE)],
+        zero_return_aliases=STOREAGENT_ZERO_RETURN_ALIASES,
     )
     try:
         global_context = machine._storeagent_global_init(hardware_id)
@@ -1162,7 +1073,7 @@ def generate_kbsync(bundle, hardware_id: bytes, dsid: int) -> bytes:
         machine.close()
 
 
-def _to_i32(value: int) -> int:
+def to_i32(value: int) -> int:
     return ctypes.c_int32(value & U32).value
 
 

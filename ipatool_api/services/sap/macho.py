@@ -14,6 +14,7 @@ cache images are redirected to the emulator's services.
 from __future__ import annotations
 
 import json
+import re
 import struct
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
@@ -215,40 +216,54 @@ def _arm64e_slice(data: bytes) -> bytes:
     raise SAPError("universal binary has no arm64e slice")
 
 
+# Every instruction _pac_replacement() rewrites matches one of these byte
+# patterns (little-endian words), so a regular-expression scan in C finds
+# the few candidates among millions of instructions.
+_PAC_CANDIDATE = re.compile(
+    rb"(?=(?s:.[\x08-\x0f][\x1f\x3f][\xd6\xd7]|..\xc1\xda|.[\x0b\x0f]\x5f\xd6|.[\x20-\x23]\x03\xd5))")
+_NOP = 0xD503201F
+_HINT_NOPS = frozenset({0xD503211F, 0xD503215F, 0xD503219F, 0xD50321DF, 0xD503233F, 0xD503237F, 0xD50323BF,
+                        0xD50323FF, 0xD50320FF})
+_PAC_DATA = frozenset({0xDAC10000, 0xDAC10400, 0xDAC10800, 0xDAC10C00, 0xDAC11000, 0xDAC11400, 0xDAC11800,
+                       0xDAC11C00})
+_PAC_ZERO = frozenset({0xDAC123E0, 0xDAC127E0, 0xDAC12BE0, 0xDAC12FE0, 0xDAC133E0, 0xDAC137E0, 0xDAC13BE0,
+                       0xDAC13FE0, 0xDAC143E0, 0xDAC147E0})
+
+
+def without_pointer_authentication(instruction: int) -> int:
+    """machimage WithoutPointerAuthentication: braa/blraa/retaa and friends
+    become br/blr/ret, PAC/AUT/XPAC instructions become NOPs; anything else
+    is returned unchanged."""
+    top = instruction & 0xFFFFFC00
+    if top in (0xD71F0800, 0xD71F0C00, 0xD61F0800, 0xD61F0C00):
+        return 0xD61F0000 | (instruction & 0x3E0)  # br xN
+    if top in (0xD73F0800, 0xD73F0C00, 0xD63F0800, 0xD63F0C00):
+        return 0xD63F0000 | (instruction & 0x3E0)  # blr xN
+    if top in _PAC_DATA:
+        return _NOP
+    if instruction in (0xD65F0BFF, 0xD65F0FFF):
+        return 0xD65F03C0  # ret
+    if instruction in _HINT_NOPS:
+        return _NOP
+    if instruction & 0xFFFFFFE0 in _PAC_ZERO:
+        return _NOP
+    return instruction
+
+
 def _strip_pointer_authentication(data: bytearray, sections: List[Tuple[int, int]]) -> None:
-    """machimage removePointerAuthentication: braa/blraa/retaa and friends
-    become br/blr/ret, PAC/AUT/XPAC instructions become NOPs."""
-    nop = 0xD503201F
-    hint_nops = {0xD503211F, 0xD503215F, 0xD503219F, 0xD50321DF, 0xD503233F, 0xD503237F, 0xD50323BF,
-                 0xD50323FF, 0xD50320FF}
-    pac_data = {0xDAC10000, 0xDAC10400, 0xDAC10800, 0xDAC10C00, 0xDAC11000, 0xDAC11400, 0xDAC11800, 0xDAC11C00}
-    pac_zero = {0xDAC123E0, 0xDAC127E0, 0xDAC12BE0, 0xDAC12FE0, 0xDAC133E0, 0xDAC137E0, 0xDAC13BE0,
-                0xDAC13FE0, 0xDAC143E0, 0xDAC147E0}
+    """machimage removePointerAuthentication over the instruction sections."""
+    view = bytes(data)
     for start, end in sections:
         if end > len(data):
             raise SAPError("instruction section exceeds the image")
-        words = list(struct.unpack_from(f"<{(end - start) // 4}I", data, start))
-        changed = False
-        for index, instruction in enumerate(words):
-            replacement = 0
-            top = instruction & 0xFFFFFC00
-            if top in (0xD71F0800, 0xD71F0C00, 0xD61F0800, 0xD61F0C00):
-                replacement = 0xD61F0000 | (instruction & 0x3E0)  # br xN
-            elif top in (0xD73F0800, 0xD73F0C00, 0xD63F0800, 0xD63F0C00):
-                replacement = 0xD63F0000 | (instruction & 0x3E0)  # blr xN
-            elif top in pac_data:
-                replacement = nop
-            elif instruction in (0xD65F0BFF, 0xD65F0FFF):
-                replacement = 0xD65F03C0  # ret
-            elif instruction in hint_nops:
-                replacement = nop
-            elif instruction & 0xFFFFFFE0 in pac_zero:
-                replacement = nop
-            if replacement:
-                words[index] = replacement
-                changed = True
-        if changed:
-            struct.pack_into(f"<{len(words)}I", data, start, *words)
+        for match in _PAC_CANDIDATE.finditer(view, start, end):
+            offset = match.start()
+            if (offset - start) % 4 or offset + 4 > end:
+                continue
+            instruction = struct.unpack_from("<I", view, offset)[0]
+            replacement = without_pointer_authentication(instruction)
+            if replacement != instruction:
+                struct.pack_into("<I", data, offset, replacement)
 
 
 def _sign_extend(value: int, bits: int) -> int:
@@ -258,7 +273,8 @@ def _sign_extend(value: int, bits: int) -> int:
 class Image:
     """A Mach-O file image (CoreFP, commerce)."""
 
-    def __init__(self, name: str, raw: bytes) -> None:
+    def __init__(self, name: str, raw: bytes, pac_stripped: bool = False) -> None:
+        """``pac_stripped``: ``raw`` is already the output of strip_image()."""
         self.name = name
         self.data = bytearray(_arm64e_slice(raw))
         self.relocated = False
@@ -272,10 +288,11 @@ class Image:
         self._parse_header()
         self.base = next((s.address for s in self.segments if s.name == "__TEXT"), 0)
         self._validate_segments()
-        _strip_pointer_authentication(self.data, [
-            (s.offset, s.offset + s.size) for s in self.sections
-            if s.flags & (S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS)
-        ])
+        if not pac_stripped:
+            _strip_pointer_authentication(self.data, [
+                (s.offset, s.offset + s.size) for s in self.sections
+                if s.flags & (S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS)
+            ])
         self.rebases: List[Rebase] = []
         self.binds: List[Bind] = []
         if self._chained is None:
@@ -627,6 +644,60 @@ class Image:
             target -= self.base
         return load_base + target, step
 
+    def adopt(self, data: bytes, load_base: int) -> None:
+        """Use ``data`` as this image's already relocated contents."""
+        if self.relocated:
+            raise SAPError(f"{self.name} is already relocated")
+        self.data = data
+        self.relocated = True
+        self.loaded_base = load_base
+
+    def contains_address(self, address: int) -> bool:
+        return any(s.address <= address < s.address + s.size for s in self.segments)
+
+    def relocate_kernel_cache_pointers(self, load_base: int, kernel_base: int, resolve: Callable[[str], int]) -> None:
+        """machimage RelocateKernelCachePointers: an executable taken from a
+        kernel collection keeps the collection's fixed-up pointers
+        (DYLD_CHAINED_PTR_64_KERNEL_CACHE rebases), which its own Mach-O
+        streams don't describe. Every 4-byte aligned word outside the text
+        segments that decodes to an address in the image, or to a symbol
+        resolved from another kext, is rewritten for ``load_base``."""
+        external: Dict[int, str] = {}
+        for name, value in self._symbols:
+            if value == 0 or self.contains_address(value):
+                continue
+            external[value] = name
+        stride = 4
+        for s in self.segments:
+            if s.name in ("__TEXT", "__TEXT_EXEC", "__LINKEDIT") or s.file_size < POINTER_SIZE:
+                continue
+            start = s.file_offset
+            remainder = s.address % stride
+            if remainder:
+                start += stride - remainder
+            end = s.file_offset + s.file_size
+            for offset in range(start, end - POINTER_SIZE + 1, stride):
+                raw = struct.unpack_from("<Q", self.data, offset)[0]
+                target = raw & 0x3FFFFFFF
+                if (raw >> 30) & 0x3 or target == 0:
+                    continue
+                original = kernel_base + target
+                if original > U64:
+                    continue
+                if self.contains_address(original):
+                    relocated = load_base + (original - self.base)
+                    if relocated > U64:
+                        raise SAPError(f"kernel-cache pointer at {offset:#x} overflows in {self.name}")
+                elif original in external:
+                    try:
+                        relocated = resolve(external[original])
+                    except SAPError as exc:
+                        raise SAPError(f"resolve kernel-cache pointer {external[original]} at {offset:#x} "
+                                       f"in {self.name}: {exc}") from exc
+                else:
+                    continue
+                struct.pack_into("<Q", self.data, offset, relocated & U64)
+
     def load(self, uc) -> None:
         if not self.relocated:
             raise SAPError(f"{self.name} must be relocated before loading")
@@ -666,7 +737,7 @@ def _map_and_write(uc, name: str, items: List[Tuple[int, int, bytes]]) -> None:
 class PrelinkedImage:
     """An image extracted from the dyld shared cache (dyld.py blob)."""
 
-    def __init__(self, name: str, blob: bytes) -> None:
+    def __init__(self, name: str, blob: bytes, pac_stripped: bool = False) -> None:
         from .dyld import BLOB_MAGIC
 
         if not blob.startswith(BLOB_MAGIC):
@@ -674,6 +745,7 @@ class PrelinkedImage:
         length = struct.unpack_from("<I", blob, len(BLOB_MAGIC))[0]
         start = len(BLOB_MAGIC) + 4
         meta = json.loads(blob[start : start + length])
+        self._header = bytes(blob[: start + length])
         self.name = name
         self.data = bytearray(blob[start + length :])
         self.base = meta["base"]
@@ -689,12 +761,20 @@ class PrelinkedImage:
                 if s.file_size and s.address <= section["address"] and section["address"] + section["size"] <= s.address + s.file_size:
                     start = s.file_offset + section["address"] - s.address
                     instruction_ranges.append((start, start + section["size"]))
-        _strip_pointer_authentication(self.data, instruction_ranges)
+        if not pac_stripped:
+            _strip_pointer_authentication(self.data, instruction_ranges)
 
     def export(self, symbol: str, _load_base: int = 0) -> int:
         if symbol not in self._exports:
             raise SAPError(f"find {symbol} in {self.name}: symbol not found")
         return self._exports[symbol]
+
+    def adopt(self, data: bytes, _load_base: int = 0) -> None:
+        """Use ``data`` as this image's already prepared contents."""
+        if self.relocated:
+            raise SAPError(f"{self.name} is already relocated")
+        self.data = data
+        self.relocated = True
 
     def prepare_prelinked(self, external: Dict[int, str], resolve: Callable[[str], int]) -> None:
         """machimage PreparePrelinked: pointers to other cache images'
@@ -727,3 +807,15 @@ class PrelinkedImage:
             (s.address, s.size, bytes(self.data[s.file_offset : s.file_offset + s.file_size]))
             for s in self.segments if s.name != "__LINKEDIT" and s.size
         ])
+
+
+def strip_image(name: str, data: bytes) -> bytes:
+    """The image with pointer authentication removed, for reuse with
+    ``pac_stripped=True``: the rewrite only depends on the file, and on big
+    images it costs seconds, so it's done once per process (assets.load)."""
+    from .dyld import BLOB_MAGIC
+
+    if data.startswith(BLOB_MAGIC):
+        image = PrelinkedImage(name, data)
+        return image._header + bytes(image.data)
+    return bytes(Image(name, data).data)
